@@ -11,7 +11,7 @@ use strict;
 use 5.00503;
 use vars qw($VERSION $_warning);
 
-$VERSION = sprintf '%d.%02d', q$Revision: 0.30 $ =~ m/(\d+)/xmsg;
+$VERSION = sprintf '%d.%02d', q$Revision: 0.31 $ =~ m/(\d+)/xmsg;
 
 use Carp qw(carp croak confess cluck verbose);
 use Fcntl;
@@ -117,85 +117,120 @@ sub Egbk::unlink(@);
 #
 sub Egbk::split(;$$$) {
 
-    if (@_ == 0) {
-        return CORE::split;
-    }
-    elsif (@_ == 1) {
-        if ($_[0] eq '') {
-            if (wantarray) {
-                return      m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF])/oxmsg;
+    # P.794 split
+    # in Chapter 29: Functions
+    # of ISBN 0-596-00027-8 Programming Perl Third Edition.
+
+    my $pattern = $_[0];
+    my $string  = $_[1];
+    my $limit   = $_[2];
+
+    # if $string is omitted, the function splits the $_ string
+    $string = $_ if not defined $string;
+
+    my @split = ();
+
+    # if $limit is negative, it is treated as if an arbitrarily large $limit has been specified
+    if ((not defined $limit) or ($limit <= 0)) {
+
+        # if $pattern is also omitted or is the literal space, " ", the function splits
+        # on whitespace, /\s+/, after skipping any leading whitespace
+        # (and so on)
+
+        if ((not defined $pattern) or ($pattern eq ' ')) {
+            $string =~ s/ \A \s+ //oxms;
+
+            # the //m modifier is assumed when you split on the pattern /^/
+            # (and so on)
+
+            while ($string =~ s/\A((?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])*?)\s+//m) {
+
+                # if the $pattern contains parentheses, then the substring matched by each pair of parentheses
+                # is included in the resulting list, interspersed with the fields that are ordinarily returned
+                # (and so on)
+
+                for (my $digit=1; eval "defined(\$$digit)"; $digit++) {
+                    push @split, eval '$' . $digit;
+                }
             }
-            else {
-                cluck "$0: Use of implicit split to \@_ is deprecated" if $^W;
-                return @_ = m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF])/oxmsg;
+        }
+
+        # a pattern capable of matching either the null string or something longer than the
+        # null string will split the value of $string into separate characters wherever it
+        # matches the null string between characters
+        # (and so on)
+
+        elsif ('' =~ m/ \A $pattern \z /xms) {
+            #                                                                               v--- Look
+            while ($string =~ s/\A((?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])+?)$pattern//m) {
+                for (my $digit=1; eval "defined(\$$digit)"; $digit++) {
+                    push @split, eval '$' . $digit;
+                }
+            }
+        }
+
+        else {
+            #                                                                               v--- Look
+            while ($string =~ s/\A((?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])*?)$pattern//m) {
+                for (my $digit=1; eval "defined(\$$digit)"; $digit++) {
+                    push @split, eval '$' . $digit;
+                }
+            }
+        }
+    }
+
+    else {
+        if ((not defined $pattern) or ($pattern eq ' ')) {
+            $string =~ s/ \A \s+ //oxms;
+            while ((--$limit > 0) and (length($string) > 0)) {
+                if ($string =~ s/\A((?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])*?)\s+//m) {
+                    for (my $digit=1; eval "defined(\$$digit)"; $digit++) {
+                        push @split, eval '$' . $digit;
+                    }
+                }
+            }
+        }
+        elsif ('' =~ m/ \A $pattern \z /xms) {
+            while ((--$limit > 0) and (length($string) > 0)) {
+                #                                                                            v--- Look
+                if ($string =~ s/\A((?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])+?)$pattern//m) {
+                    for (my $digit=1; eval "defined(\$$digit)"; $digit++) {
+                        push @split, eval '$' . $digit;
+                    }
+                }
             }
         }
         else {
-            return CORE::split $_[0];
+            while ((--$limit > 0) and (length($string) > 0)) {
+                #                                                                            v--- Look
+                if ($string =~ s/\A((?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])*?)$pattern//m) {
+                    for (my $digit=1; eval "defined(\$$digit)"; $digit++) {
+                        push @split, eval '$' . $digit;
+                    }
+                }
+            }
         }
     }
-    elsif (@_ == 2) {
-        if ($_[0] eq '') {
-            if (wantarray) {
-                return      $_[1] =~ m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF])/oxmsg;
-            }
-            else {
-                cluck "$0: Use of implicit split to \@_ is deprecated" if $^W;
-                return @_ = $_[1] =~ m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF])/oxmsg;
-            }
-        }
-        else {
-            return CORE::split $_[0], $_[1];
+
+    push @split, $string;
+
+    # if $limit is omitted or zero, trailing null fields are stripped from the result
+    if ((not defined $limit) or ($limit == 0)) {
+        while ($split[-1] eq '') {
+            pop @split;
         }
     }
-    elsif (@_ == 3) {
-        if ($_[0] eq '') {
-            if ($_[2] == 0) {
-                if (wantarray) {
-                    return      $_[1] =~ m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF])/oxmsg;
-                }
-                else {
-                    cluck "$0: Use of implicit split to \@_ is deprecated" if $^W;
-                    return @_ = $_[1] =~ m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF])/oxmsg;
-                }
-            }
-            elsif ($_[2] == 1) {
-                return $_[1];
-            }
-            else {
-                my @split = $_[1] =~ m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF])/oxmsg;
-                if (scalar(@split) < $_[2]) {
-                    if (wantarray) {
-                        return      @split, '';
-                    }
-                    else {
-                        cluck "$0: Use of implicit split to \@_ is deprecated" if $^W;
-                        return @_ = @split, '';
-                    }
-                }
-                elsif (scalar(@split) == $_[2]) {
-                    if (wantarray) {
-                        return      @split;
-                    }
-                    else {
-                        cluck "$0: Use of implicit split to \@_ is deprecated" if $^W;
-                        return @_ = @split;
-                    }
-                }
-                else {
-                    if (wantarray) {
-                        return      @split[0..$_[2]-2], join '', @split[$_[2]-1..$#split];
-                    }
-                    else {
-                        cluck "$0: Use of implicit split to \@_ is deprecated" if $^W;
-                        return @_ = @split[0..$_[2]-2], join '', @split[$_[2]-1..$#split];
-                    }
-                }
-            }
-        }
-        else {
-            return CORE::split $_[0], $_[1], $_[2];
-        }
+
+    # resulting list value in list context
+    if (wantarray) {
+        return @split;
+    }
+
+    # count of substrings in scalar context
+    else {
+        cluck "$0: Use of implicit split to \@_ is deprecated" if $^W;
+        @_ = @split;
+        return scalar @_;
     }
 }
 
@@ -299,10 +334,10 @@ sub Egbk::chop(@) {
         $_ = join '', @char;
     }
     else {
-        for my $string (@_) {
-            my @char = $string =~ m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF]) /oxmsg;
+        for (@_) {
+            my @char = m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF]) /oxmsg;
             $chop = pop @char;
-            $string = join '', @char;
+            $_ = join '', @char;
         }
     }
     return $chop;
@@ -362,13 +397,15 @@ sub Egbk::rindex($$;$) {
 #
 sub Egbk::lc($) {
 
+    local $_ = shift if @_;
+
     my %lc = ();
     @lc{qw(A B C D E F G H I J K L M N O P Q R S T U V W X Y Z)} =
         qw(a b c d e f g h i j k l m n o p q r s t u v w x y z);
 
     local $^W = 0;
 
-    return join('', map {$lc{$_}||$_} $_[0] =~ m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF])/oxmsg);
+    return join('', map {$lc{$_}||$_} m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF])/oxmsg);
 }
 
 #
@@ -390,13 +427,15 @@ sub Egbk::lc_() {
 #
 sub Egbk::uc($) {
 
+    local $_ = shift if @_;
+
     my %uc = ();
     @uc{qw(a b c d e f g h i j k l m n o p q r s t u v w x y z)} =
         qw(A B C D E F G H I J K L M N O P Q R S T U V W X Y Z);
 
     local $^W = 0;
 
-    return join('', map {$uc{$_}||$_} $_[0] =~ m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF]) /oxmsg);
+    return join('', map {$uc{$_}||$_} m/\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF]) /oxmsg);
 }
 
 #
@@ -574,7 +613,7 @@ sub Egbk::ignorecase(@) {
 #
 sub _charlist_tr {
 
-    my(@char) = @_;
+    my @char = @_;
 
     # unescape character
     for (my $i=0; $i <= $#char; $i++) {
@@ -686,6 +725,7 @@ sub _charlist_tr {
 # GBK open character list for qr
 #
 sub _charlist_qr {
+
     my $modifier = pop @_;
     my @char = @_;
 
@@ -925,6 +965,7 @@ sub _charlist_qr {
 # GBK open character list for not qr
 #
 sub _charlist_not_qr {
+
     my $modifier = pop @_;
     my @char = @_;
 
@@ -1163,11 +1204,14 @@ sub _charlist_not_qr {
 # GBK order to character (with parameter)
 #
 sub Egbk::chr($) {
-    if ($_[0] > 0xFF) {
-        return pack 'CC', int($_[0] / 0x100), $_[0] % 0x100;
+
+    local $_ = shift if @_;
+
+    if ($_ > 0xFF) {
+        return pack 'CC', int($_ / 0x100), $_ % 0x100;
     }
     else {
-        return CORE::chr $_[0];
+        return CORE::chr $_;
     }
 }
 
@@ -1175,6 +1219,7 @@ sub Egbk::chr($) {
 # GBK order to character (without parameter)
 #
 sub Egbk::chr_() {
+
     if ($_ > 0xFF) {
         return pack 'CC', int($_ / 0x100), $_ % 0x100;
     }
@@ -1187,12 +1232,15 @@ sub Egbk::chr_() {
 # GBK character to order (with parameter)
 #
 sub Egbk::ord($) {
-    if ($_[0] =~ m/\A [\x81-\xFE] /oxms) {
-        my($ord1,$ord2) = unpack 'CC', $_[0];
+
+    local $_ = shift if @_;
+
+    if (m/\A [\x81-\xFE] /oxms) {
+        my($ord1,$ord2) = unpack 'CC', $_;
         return $ord1 * 0x100 + $ord2;
     }
     else {
-        return CORE::ord $_[0];
+        return CORE::ord $_;
     }
 }
 
@@ -1200,6 +1248,7 @@ sub Egbk::ord($) {
 # GBK character to order (without parameter)
 #
 sub Egbk::ord_() {
+
     if (m/\A [\x81-\xFE] /oxms) {
         my($ord1,$ord2) = unpack 'CC', $_;
         return $ord1 * 0x100 + $ord2;
@@ -1226,6 +1275,7 @@ sub Egbk::reverse(@) {
 # GBK file test -r expr
 #
 sub Egbk::r(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -r (Egbk::r)' if @_ and not wantarray;
 
@@ -1234,6 +1284,7 @@ sub Egbk::r(;*@) {
     }
 
     # P.908 Symbol
+    # in Chapter 32: Standard Modules
     # of ISBN 0-596-00027-8 Programming Perl Third Edition.
     # (and so on)
 
@@ -1263,6 +1314,7 @@ sub Egbk::r(;*@) {
 # GBK file test -w expr
 #
 sub Egbk::w(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -w (Egbk::w)' if @_ and not wantarray;
 
@@ -1295,6 +1347,7 @@ sub Egbk::w(;*@) {
 # GBK file test -x expr
 #
 sub Egbk::x(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -x (Egbk::x)' if @_ and not wantarray;
 
@@ -1329,6 +1382,7 @@ sub Egbk::x(;*@) {
 # GBK file test -o expr
 #
 sub Egbk::o(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -o (Egbk::o)' if @_ and not wantarray;
 
@@ -1361,6 +1415,7 @@ sub Egbk::o(;*@) {
 # GBK file test -R expr
 #
 sub Egbk::R(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -R (Egbk::R)' if @_ and not wantarray;
 
@@ -1393,6 +1448,7 @@ sub Egbk::R(;*@) {
 # GBK file test -W expr
 #
 sub Egbk::W(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -W (Egbk::W)' if @_ and not wantarray;
 
@@ -1425,6 +1481,7 @@ sub Egbk::W(;*@) {
 # GBK file test -X expr
 #
 sub Egbk::X(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -X (Egbk::X)' if @_ and not wantarray;
 
@@ -1459,6 +1516,7 @@ sub Egbk::X(;*@) {
 # GBK file test -O expr
 #
 sub Egbk::O(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -O (Egbk::O)' if @_ and not wantarray;
 
@@ -1491,6 +1549,7 @@ sub Egbk::O(;*@) {
 # GBK file test -e expr
 #
 sub Egbk::e(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -e (Egbk::e)' if @_ and not wantarray;
 
@@ -1531,6 +1590,7 @@ sub Egbk::e(;*@) {
 # GBK file test -z expr
 #
 sub Egbk::z(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -z (Egbk::z)' if @_ and not wantarray;
 
@@ -1563,6 +1623,7 @@ sub Egbk::z(;*@) {
 # GBK file test -s expr
 #
 sub Egbk::s(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -s (Egbk::s)' if @_ and not wantarray;
 
@@ -1595,6 +1656,7 @@ sub Egbk::s(;*@) {
 # GBK file test -f expr
 #
 sub Egbk::f(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -f (Egbk::f)' if @_ and not wantarray;
 
@@ -1627,6 +1689,7 @@ sub Egbk::f(;*@) {
 # GBK file test -d expr
 #
 sub Egbk::d(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -d (Egbk::d)' if @_ and not wantarray;
 
@@ -1651,6 +1714,7 @@ sub Egbk::d(;*@) {
 # GBK file test -l expr
 #
 sub Egbk::l(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -l (Egbk::l)' if @_ and not wantarray;
 
@@ -1683,6 +1747,7 @@ sub Egbk::l(;*@) {
 # GBK file test -p expr
 #
 sub Egbk::p(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -p (Egbk::p)' if @_ and not wantarray;
 
@@ -1715,6 +1780,7 @@ sub Egbk::p(;*@) {
 # GBK file test -S expr
 #
 sub Egbk::S(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -S (Egbk::S)' if @_ and not wantarray;
 
@@ -1747,6 +1813,7 @@ sub Egbk::S(;*@) {
 # GBK file test -b expr
 #
 sub Egbk::b(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -b (Egbk::b)' if @_ and not wantarray;
 
@@ -1779,6 +1846,7 @@ sub Egbk::b(;*@) {
 # GBK file test -c expr
 #
 sub Egbk::c(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -c (Egbk::c)' if @_ and not wantarray;
 
@@ -1811,6 +1879,7 @@ sub Egbk::c(;*@) {
 # GBK file test -t expr
 #
 sub Egbk::t(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -t (Egbk::t)' if @_ and not wantarray;
 
@@ -1843,6 +1912,7 @@ sub Egbk::t(;*@) {
 # GBK file test -u expr
 #
 sub Egbk::u(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -u (Egbk::u)' if @_ and not wantarray;
 
@@ -1875,6 +1945,7 @@ sub Egbk::u(;*@) {
 # GBK file test -g expr
 #
 sub Egbk::g(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -g (Egbk::g)' if @_ and not wantarray;
 
@@ -1907,6 +1978,7 @@ sub Egbk::g(;*@) {
 # GBK file test -k expr
 #
 sub Egbk::k(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -k (Egbk::k)' if @_ and not wantarray;
 
@@ -1939,6 +2011,7 @@ sub Egbk::k(;*@) {
 # GBK file test -T expr
 #
 sub Egbk::T(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -T (Egbk::T)' if @_ and not wantarray;
     my $T = 1;
@@ -1950,6 +2023,7 @@ sub Egbk::T(;*@) {
         }
 
         # P.813 tell
+        # in Chapter 29: Functions
         # of ISBN 0-596-00027-8 Programming Perl Third Edition.
         # (and so on)
 
@@ -2009,6 +2083,7 @@ sub Egbk::T(;*@) {
 # GBK file test -B expr
 #
 sub Egbk::B(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -B (Egbk::B)' if @_ and not wantarray;
     my $B = '';
@@ -2070,6 +2145,7 @@ sub Egbk::B(;*@) {
 # GBK file test -M expr
 #
 sub Egbk::M(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -M (Egbk::M)' if @_ and not wantarray;
 
@@ -2103,6 +2179,7 @@ sub Egbk::M(;*@) {
 # GBK file test -A expr
 #
 sub Egbk::A(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -A (Egbk::A)' if @_ and not wantarray;
 
@@ -2136,6 +2213,7 @@ sub Egbk::A(;*@) {
 # GBK file test -C expr
 #
 sub Egbk::C(;*@) {
+
     local $_ = shift if @_;
     croak 'Too many arguments for -C (Egbk::C)' if @_ and not wantarray;
 
@@ -2169,22 +2247,20 @@ sub Egbk::C(;*@) {
 # GBK file test -r $_
 #
 sub Egbk::r_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -r _ ? $true : $false;
+        return -r _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -r _ ? $true : $false;
+            return -r _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $r = -r $fh;
                 close $fh;
-                return $r ? $true : $false;
+                return $r ? 1 : '';
             }
         }
     }
@@ -2195,22 +2271,20 @@ sub Egbk::r_() {
 # GBK file test -w $_
 #
 sub Egbk::w_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -w _ ? $true : $false;
+        return -w _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -w _ ? $true : $false;
+            return -w _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_WRONLY|O_APPEND) {
                 my $w = -w $fh;
                 close $fh;
-                return $w ? $true : $false;
+                return $w ? 1 : '';
             }
         }
     }
@@ -2221,15 +2295,13 @@ sub Egbk::w_() {
 # GBK file test -x $_
 #
 sub Egbk::x_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -x _ ? $true : $false;
+        return -x _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -x _ ? $true : $false;
+            return -x _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
@@ -2239,7 +2311,7 @@ sub Egbk::x_() {
             }
 
             # filename is not .COM .EXE .BAT .CMD
-            return $false;
+            return '';
         }
     }
     return;
@@ -2249,22 +2321,20 @@ sub Egbk::x_() {
 # GBK file test -o $_
 #
 sub Egbk::o_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -o _ ? $true : $false;
+        return -o _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -o _ ? $true : $false;
+            return -o _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $o = -o $fh;
                 close $fh;
-                return $o ? $true : $false;
+                return $o ? 1 : '';
             }
         }
     }
@@ -2275,22 +2345,20 @@ sub Egbk::o_() {
 # GBK file test -R $_
 #
 sub Egbk::R_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -R _ ? $true : $false;
+        return -R _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -R _ ? $true : $false;
+            return -R _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $R = -R $fh;
                 close $fh;
-                return $R ? $true : $false;
+                return $R ? 1 : '';
             }
         }
     }
@@ -2301,22 +2369,20 @@ sub Egbk::R_() {
 # GBK file test -W $_
 #
 sub Egbk::W_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -W _ ? $true : $false;
+        return -W _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -W _ ? $true : $false;
+            return -W _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_WRONLY|O_APPEND) {
                 my $W = -W $fh;
                 close $fh;
-                return $W ? $true : $false;
+                return $W ? 1 : '';
             }
         }
     }
@@ -2327,15 +2393,13 @@ sub Egbk::W_() {
 # GBK file test -X $_
 #
 sub Egbk::X_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -X _ ? $true : $false;
+        return -X _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -X _ ? $true : $false;
+            return -X _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
@@ -2345,7 +2409,7 @@ sub Egbk::X_() {
             }
 
             # filename is not .COM .EXE .BAT .CMD
-            return $false;
+            return '';
         }
     }
     return;
@@ -2355,22 +2419,20 @@ sub Egbk::X_() {
 # GBK file test -O $_
 #
 sub Egbk::O_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -O _ ? $true : $false;
+        return -O _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -O _ ? $true : $false;
+            return -O _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $O = -O $fh;
                 close $fh;
-                return $O ? $true : $false;
+                return $O ? 1 : '';
             }
         }
     }
@@ -2381,22 +2443,20 @@ sub Egbk::O_() {
 # GBK file test -e $_
 #
 sub Egbk::e_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return $true;
+        return 1;
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return $true;
+            return 1;
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $e = -e $fh;
                 close $fh;
-                return $e ? $true : $false;
+                return $e ? 1 : '';
             }
         }
     }
@@ -2407,22 +2467,20 @@ sub Egbk::e_() {
 # GBK file test -z $_
 #
 sub Egbk::z_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -z _ ? $true : $false;
+        return -z _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -z _ ? $true : $false;
+            return -z _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $z = -z $fh;
                 close $fh;
-                return $z ? $true : $false;
+                return $z ? 1 : '';
             }
         }
     }
@@ -2433,6 +2491,7 @@ sub Egbk::z_() {
 # GBK file test -s $_
 #
 sub Egbk::s_() {
+
     if (-e $_) {
         return -s _;
     }
@@ -2456,22 +2515,20 @@ sub Egbk::s_() {
 # GBK file test -f $_
 #
 sub Egbk::f_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -f _ ? $true : $false;
+        return -f _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return $false;
+            return '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $f = -f $fh;
                 close $fh;
-                return $f ? $true : $false;
+                return $f ? 1 : '';
             }
         }
     }
@@ -2482,14 +2539,12 @@ sub Egbk::f_() {
 # GBK file test -d $_
 #
 sub Egbk::d_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -d _ ? $true : $false;
+        return -d _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
-        return -d "$_/" ? $true : $false;
+        return -d "$_/" ? 1 : '';
     }
     return;
 }
@@ -2498,22 +2553,20 @@ sub Egbk::d_() {
 # GBK file test -l $_
 #
 sub Egbk::l_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -l _ ? $true : $false;
+        return -l _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -l _ ? $true : $false;
+            return -l _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $l = -l $fh;
                 close $fh;
-                return $l ? $true : $false;
+                return $l ? 1 : '';
             }
         }
     }
@@ -2524,22 +2577,20 @@ sub Egbk::l_() {
 # GBK file test -p $_
 #
 sub Egbk::p_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -p _ ? $true : $false;
+        return -p _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -p _ ? $true : $false;
+            return -p _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $p = -p $fh;
                 close $fh;
-                return $p ? $true : $false;
+                return $p ? 1 : '';
             }
         }
     }
@@ -2550,22 +2601,20 @@ sub Egbk::p_() {
 # GBK file test -S $_
 #
 sub Egbk::S_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -S _ ? $true : $false;
+        return -S _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -S _ ? $true : $false;
+            return -S _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $S = -S $fh;
                 close $fh;
-                return $S ? $true : $false;
+                return $S ? 1 : '';
             }
         }
     }
@@ -2576,22 +2625,20 @@ sub Egbk::S_() {
 # GBK file test -b $_
 #
 sub Egbk::b_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -b _ ? $true : $false;
+        return -b _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -b _ ? $true : $false;
+            return -b _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $b = -b $fh;
                 close $fh;
-                return $b ? $true : $false;
+                return $b ? 1 : '';
             }
         }
     }
@@ -2602,22 +2649,20 @@ sub Egbk::b_() {
 # GBK file test -c $_
 #
 sub Egbk::c_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -c _ ? $true : $false;
+        return -c _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -c _ ? $true : $false;
+            return -c _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $c = -c $fh;
                 close $fh;
-                return $c ? $true : $false;
+                return $c ? 1 : '';
             }
         }
     }
@@ -2628,32 +2673,28 @@ sub Egbk::c_() {
 # GBK file test -t $_
 #
 sub Egbk::t_() {
-    my $true  = 1;
-    my $false = '';
 
-    return -t STDIN ? $true : $false;
+    return -t STDIN ? 1 : '';
 }
 
 #
 # GBK file test -u $_
 #
 sub Egbk::u_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -u _ ? $true : $false;
+        return -u _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -u _ ? $true : $false;
+            return -u _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $u = -u $fh;
                 close $fh;
-                return $u ? $true : $false;
+                return $u ? 1 : '';
             }
         }
     }
@@ -2664,22 +2705,20 @@ sub Egbk::u_() {
 # GBK file test -g $_
 #
 sub Egbk::g_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -g _ ? $true : $false;
+        return -g _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -g _ ? $true : $false;
+            return -g _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $g = -g $fh;
                 close $fh;
-                return $g ? $true : $false;
+                return $g ? 1 : '';
             }
         }
     }
@@ -2690,22 +2729,20 @@ sub Egbk::g_() {
 # GBK file test -k $_
 #
 sub Egbk::k_() {
-    my $true  = 1;
-    my $false = '';
 
     if (-e $_) {
-        return -k _ ? $true : $false;
+        return -k _ ? 1 : '';
     }
     elsif (_MSWin32_5Cended_path($_)) {
         if (-d "$_/") {
-            return -k _ ? $true : $false;
+            return -k _ ? 1 : '';
         }
         else {
             my $fh = Symbol::gensym();
             if (sysopen $fh, $_, O_RDONLY) {
                 my $k = -k $fh;
                 close $fh;
-                return $k ? $true : $false;
+                return $k ? 1 : '';
             }
         }
     }
@@ -2716,9 +2753,8 @@ sub Egbk::k_() {
 # GBK file test -T $_
 #
 sub Egbk::T_() {
-    my $true  = 1;
-    my $false = '';
-    my $T     = $true;
+
+    my $T = 1;
 
     if (-d $_ or -d "$_/") {
         return;
@@ -2730,16 +2766,16 @@ sub Egbk::T_() {
 
     if (sysread $fh, my $block, 512) {
         if ($block =~ /[\000\377]/oxms) {
-            $T = $false;
+            $T = '';
         }
         elsif (($block =~ tr/\000-\007\013\016-\032\034-\037\377//) * 10 > length $block) {
-            $T = $false;
+            $T = '';
         }
     }
 
     # 0 byte or eof
     else {
-        $T = $true;
+        $T = 1;
     }
     close $fh;
 
@@ -2751,9 +2787,8 @@ sub Egbk::T_() {
 # GBK file test -B $_
 #
 sub Egbk::B_() {
-    my $true  = 1;
-    my $false = '';
-    my $B     = $false;
+
+    my $B = '';
 
     if (-d $_ or -d "$_/") {
         return;
@@ -2765,16 +2800,16 @@ sub Egbk::B_() {
 
     if (sysread $fh, my $block, 512) {
         if ($block =~ /[\000\377]/oxms) {
-            $B = $true;
+            $B = 1;
         }
         elsif (($block =~ tr/\000-\007\013\016-\032\034-\037\377//) * 10 > length $block) {
-            $B = $true;
+            $B = 1;
         }
     }
 
     # 0 byte or eof
     else {
-        $B = $true;
+        $B = 1;
     }
     close $fh;
 
@@ -2786,6 +2821,7 @@ sub Egbk::B_() {
 # GBK file test -M $_
 #
 sub Egbk::M_() {
+
     if (-e $_) {
         return -M _;
     }
@@ -2810,6 +2846,7 @@ sub Egbk::M_() {
 # GBK file test -A $_
 #
 sub Egbk::A_() {
+
     if (-e $_) {
         return -A _;
     }
@@ -2834,6 +2871,7 @@ sub Egbk::A_() {
 # GBK file test -C $_
 #
 sub Egbk::C_() {
+
     if (-e $_) {
         return -C _;
     }
@@ -2858,6 +2896,7 @@ sub Egbk::C_() {
 # GBK path globbing (with parameter)
 #
 sub Egbk::glob($) {
+
     if ($^O =~ /\A (?:MSWin32|NetWare|symbian|dos) \z/oxms) {
         return _dosglob(@_);
     }
@@ -2870,6 +2909,7 @@ sub Egbk::glob($) {
 # GBK path globbing (without parameter)
 #
 sub Egbk::glob_() {
+
     if ($^O =~ /\A (?:MSWin32|NetWare|symbian|dos) \z/oxms) {
         return _dosglob();
     }
@@ -2933,6 +2973,7 @@ sub _dosglob {
 # GBK path globbing subroutine
 #
 sub _do_glob {
+
     my($cond,@expr) = @_;
     my @glob = ();
 
@@ -3095,6 +3136,7 @@ INNER:
 # GBK parse line
 #
 sub _parse_line {
+
     my($line) = @_;
 
     $line .= ' ';
@@ -3113,6 +3155,7 @@ sub _parse_line {
 # GBK parse path
 #
 sub _parse_path {
+
     my($path,$pathsep) = @_;
 
     $path .= '/';
@@ -3131,16 +3174,19 @@ sub _parse_path {
 # GBK file lstat (with parameter)
 #
 sub Egbk::lstat(*) {
-    my $fh = Symbol::qualify_to_ref $_[0];
+
+    local $_ = shift if @_;
+
+    my $fh = Symbol::qualify_to_ref $_;
     if (fileno $fh) {
         return CORE::lstat $fh;
     }
-    elsif (-e $_[0]) {
+    elsif (-e $_) {
         return CORE::lstat _;
     }
-    elsif (_MSWin32_5Cended_path($_[0])) {
+    elsif (_MSWin32_5Cended_path($_)) {
         my $fh = Symbol::gensym();
-        if (sysopen $fh, $_[0], O_RDONLY) {
+        if (sysopen $fh, $_, O_RDONLY) {
             my @lstat = CORE::lstat $fh;
             close $fh;
             return @lstat;
@@ -3153,6 +3199,7 @@ sub Egbk::lstat(*) {
 # GBK file lstat (without parameter)
 #
 sub Egbk::lstat_() {
+
     my $fh = Symbol::qualify_to_ref $_;
     if (fileno $fh) {
         return CORE::lstat $fh;
@@ -3196,16 +3243,19 @@ sub Egbk::opendir(*$) {
 # GBK file stat (with parameter)
 #
 sub Egbk::stat(*) {
-    my $fh = Symbol::qualify_to_ref $_[0];
+
+    local $_ = shift if @_;
+
+    my $fh = Symbol::qualify_to_ref $_;
     if (fileno $fh) {
         return CORE::stat $fh;
     }
-    elsif (-e $_[0]) {
+    elsif (-e $_) {
         return CORE::stat _;
     }
-    elsif (_MSWin32_5Cended_path($_[0])) {
+    elsif (_MSWin32_5Cended_path($_)) {
         my $fh = Symbol::gensym();
-        if (sysopen $fh, $_[0], O_RDONLY) {
+        if (sysopen $fh, $_, O_RDONLY) {
             my @stat = CORE::stat $fh;
             close $fh;
             return @stat;
@@ -3218,6 +3268,7 @@ sub Egbk::stat(*) {
 # GBK file stat (without parameter)
 #
 sub Egbk::stat_() {
+
     my $fh = Symbol::qualify_to_ref $_;
     if (fileno $fh) {
         return CORE::stat $fh;
@@ -3240,9 +3291,13 @@ sub Egbk::stat_() {
 # GBK path unlink
 #
 sub Egbk::unlink(@) {
-    if (@_ == 0) {
+
+    local @_ = ($_) unless @_;
+
+    my $unlink = 0;
+    for (@_) {
         if (CORE::unlink) {
-            return 1;
+            $unlink++;
         }
         elsif (_MSWin32_5Cended_path($_)) {
             my @char = /\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF]) /oxmsg;
@@ -3256,41 +3311,18 @@ sub Egbk::unlink(@) {
                 close $fh;
             }
             else {
-                return 1;
-            }
-        }
-        return 0;
-    }
-    else {
-        my $unlink = 0;
-        for (@_) {
-            if (CORE::unlink) {
                 $unlink++;
             }
-            elsif (_MSWin32_5Cended_path($_)) {
-                my @char = /\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF]) /oxmsg;
-                my $file = join '', map {{'/' => '\\'}->{$_} || $_} @char;
-                if ($file =~ m/ \A (?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])*? [ ] /oxms) {
-                    $file = qq{"$file"};
-                }
-                system(qq{del $file >NUL 2>NUL});
-                my $fh = Symbol::gensym();
-                if (sysopen $fh, $_, O_RDONLY) {
-                    close $fh;
-                }
-                else {
-                    $unlink++;
-                }
-            }
         }
-        return $unlink;
     }
+    return $unlink;
 }
 
 #
 # GBK chr(0x5C) ended path on MSWin32
 #
 sub _MSWin32_5Cended_path {
+
     if ((@_ >= 1) and ($_[0] ne '')) {
         if ($^O =~ /\A (?:MSWin32|NetWare|symbian|dos) \z/oxms) {
             my @char = $_[0] =~ /\G ([\x81-\xFE][\x00-\xFF] | [\x00-\xFF]) /oxmsg;
@@ -3350,8 +3382,8 @@ Egbk - Run-time routines for GBK.pm
 
 =head1 ABSTRACT
 
-It output "use Egbk;" automatically when GBK.pm converts your script.
-So you need not use this module directly.
+This module is a run-time routines of the GBK module.
+Because the GBK module automatically uses this module, you need not use directly.
 
 =head1 BUGS AND LIMITATIONS
 
