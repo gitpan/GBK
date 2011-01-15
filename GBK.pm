@@ -1,32 +1,62 @@
 package GBK;
 ######################################################################
 #
-# GBK - "Yet Another JPerl" Source code filter to escape GBK
+# GBK - Source code filter to escape GBK
 #
-# Copyright (c) 2008, 2009 INABA Hitoshi <ina@cpan.org>
+#                  http://search.cpan.org/dist/GBK/
+#
+# Copyright (c) 2008, 2009, 2010, 2011 INABA Hitoshi <ina@cpan.org>
 #
 ######################################################################
 
-use strict;
 use 5.00503;
+use strict;
 use Egbk;
-use vars qw($VERSION);
 
-$VERSION = sprintf '%d.%02d', q$Revision: 0.39 $ =~ m/(\d+)/oxmsg;
+# 12.3. Delaying use Until Runtime
+# in Chapter 12. Packages, Libraries, and Modules
+# of ISBN 0-596-00313-7 Perl Cookbook, 2nd Edition.
+# (and so on)
 
-use Fcntl;
-use Symbol;
+BEGIN { eval q{ use vars qw($VERSION) } }
 
-use Carp qw(carp croak confess cluck verbose);
-local $SIG{__DIE__}  = sub { confess @_ } if exists $ENV{'SJIS_DEBUG'};
-local $SIG{__WARN__} = sub { cluck   @_ } if exists $ENV{'SJIS_DEBUG'};
-local $^W = 1;
+$VERSION = sprintf '%d.%02d', q$Revision: 0.70 $ =~ m/(\d+)/oxmsg;
+
+# poor Symbol.pm - substitute of real Symbol.pm
+BEGIN {
+    my $genpkg = "Symbol::";
+    my $genseq = 0;
+    sub gensym () {
+        my $name = "GEN" . $genseq++;
+        no strict qw(refs);
+        my $ref = \*{$genpkg . $name};
+        delete $$genpkg{$name};
+        $ref;
+    }
+}
+
+# P.714 29.2.39. flock
+# in Chapter 29: Functions
+# of ISBN 0-596-00027-8 Programming Perl Third Edition.
+
+unless (eval q{ use Fcntl qw(:flock); 1 }) {
+    eval q{
+        sub LOCK_SH {1}
+        sub LOCK_EX {2}
+        sub LOCK_UN {8}
+        sub LOCK_NB {4}
+    };
+}
+
+# P.707 29.2.33. exec
+# in Chapter 29: Functions
+# of ISBN 0-596-00027-8 Programming Perl Third Edition.
 
 $| = 1;
 
 BEGIN {
     if ($^X =~ m/ jperl /oxmsi) {
-        croak __FILE__, ": need perl(not jperl) 5.00503 or later. (\$^X==$^X)";
+        die __FILE__, ": need perl(not jperl) 5.00503 or later. (\$^X==$^X)";
     }
 }
 
@@ -35,42 +65,52 @@ sub unimport() {}
 sub GBK::escape_script;
 
 # regexp of character
-my $qq_char   = qr/\\c[\x40-\x5F]|\\?(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])/oxms;
-my  $q_char   = qr/[\x81-\xFE][\x00-\xFF]|[\x00-\xFF]/oxms;
-my $your_char = q {[\x81-\xFE][\x00-\xFF]|[\x00-\xFF]};
+my $your_char = q{[\x81-\xFE][\x00-\xFF]|[\x00-\xFF]};
+my $qq_char   = qr/\\c[\x40-\x5F]|\\?(?:$your_char)/oxms;
+my  $q_char   = qr/$your_char/oxms;
 
 # P.1023 Appendix W.9 Multibyte Anchoring
 # of ISBN 1-56592-224-7 CJKV Information Processing
 
-my $your_gap = q{\G(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])*?};
+my $your_gap = '';
+$your_gap = q{\G(?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])*?};
 
-use vars qw($nest);
+BEGIN { eval q{ use vars qw($nest) } }
 
 # regexp of nested parens in qqXX
 
-# P.341 in Matching Nested Constructs with Embedded Code
+# P.340 Matching Nested Constructs with Embedded Code
+# in Chapter 7: Perl
 # of ISBN 0-596-00289-0 Mastering Regular Expressions, Second edition
 
 my $qq_paren   = qr{(?{local $nest=0}) (?>(?:
-                    \\c[\x40-\x5F] | \\? [\x81-\xFE][\x00-\xFF] | \\ [\x00-\xFF] |
+                    \\c[\x40-\x5F] |
+                    \\? [\x81-\xFE][\x00-\xFF] |
+                    \\ [\x00-\xFF] |
                     [^()] |
                              \(  (?{$nest++}) |
                              \)  (?(?{$nest>0})(?{$nest--})|(?!)))*) (?(?{$nest!=0})(?!))
                  }xms;
 my $qq_brace   = qr{(?{local $nest=0}) (?>(?:
-                    \\c[\x40-\x5F] | \\? [\x81-\xFE][\x00-\xFF] | \\ [\x00-\xFF] |
+                    \\c[\x40-\x5F] |
+                    \\? [\x81-\xFE][\x00-\xFF] |
+                    \\ [\x00-\xFF] |
                     [^{}] |
                              \{  (?{$nest++}) |
                              \}  (?(?{$nest>0})(?{$nest--})|(?!)))*) (?(?{$nest!=0})(?!))
                  }xms;
 my $qq_bracket = qr{(?{local $nest=0}) (?>(?:
-                    \\c[\x40-\x5F] | \\? [\x81-\xFE][\x00-\xFF] | \\ [\x00-\xFF] |
+                    \\c[\x40-\x5F] |
+                    \\? [\x81-\xFE][\x00-\xFF] |
+                    \\ [\x00-\xFF] |
                     [^[\]] |
                              \[  (?{$nest++}) |
                              \]  (?(?{$nest>0})(?{$nest--})|(?!)))*) (?(?{$nest!=0})(?!))
                  }xms;
 my $qq_angle   = qr{(?{local $nest=0}) (?>(?:
-                    \\c[\x40-\x5F] | \\? [\x81-\xFE][\x00-\xFF] | \\ [\x00-\xFF] |
+                    \\c[\x40-\x5F] |
+                    \\? [\x81-\xFE][\x00-\xFF] |
+                    \\ [\x00-\xFF] |
                     [^<>] |
                              \<  (?{$nest++}) |
                              \>  (?(?{$nest>0})(?{$nest--})|(?!)))*) (?(?{$nest!=0})(?!))
@@ -119,258 +159,43 @@ my $q_angle    = qr{(?{local $nest=0}) (?>(?:
                              \>  (?(?{$nest>0})(?{$nest--})|(?!)))*) (?(?{$nest!=0})(?!))
                  }xms;
 
-my $tr_variable = '';     # variable of                    tr///
-use vars qw($slash);      # when 'm//', '/' means regexp match 'm//' and '?' means regexp match '??'
+# P.854 31.17. use re
+# in Chapter 31. Pragmatic Modules
+# of ISBN 0-596-00027-8 Programming Perl Third Edition.
+
+my $use_re_eval = '';
+my $m_matched   = '';
+my $s_matched   = '';
+$m_matched   = q{@Egbk::m_matched};
+$s_matched   = q{@Egbk::s_matched};
+
+my $tr_variable   = '';   # variable of tr///
+my $sub_variable  = '';   # variable of s///
+my $bind_operator = '';   # =~ or !~
+BEGIN { eval q{ use vars qw($slash) } }
+                          # when 'm//', '/' means regexp match 'm//' and '?' means regexp match '??'
                           # when 'div', '/' means division operator and '?' means conditional operator (condition ? then : else)
-my %heredoc      = ();    # here document
-my $heredoc_qq   = 0;     # here document quote type
+my @heredoc = ();         # here document
+my @heredoc_delimiter = ();
+my $here_script = '';     # here script
+my $function_ord;         # ord()   to ord()   or GBK::ord()
+my $function_ord_;        # ord     to ord     or GBK::ord_
+my $function_reverse;     # reverse to reverse or GBK::reverse
 
 my $ignore_modules = join('|', qw(
     utf8
+    bytes
     I18N::Japanese
     I18N::Collate
+    I18N::JExt
+    File::DosGlob
+    Wild
+    Wildcard
+    Japanese
 ));
 
 # in Chapter 8: Standard Modules
 # of ISBN 0-596-00241-6 Perl in a Nutshell, Second Edition
-
-my $standard_modules = join('|', qw(
-    AnyDBM_File
-    Attribute::Handlers
-    attributes
-    attrs
-    AutoLoader
-    AutoSplit
-    autouse
-    B
-    B::Asmdata
-    B::Assembler
-    B::Bblock
-    B::Bytecode
-    B::C
-    B::CC
-    B::Concise
-    B::Debug
-    B::Deparse
-    B::Disassembler
-    B::Lint
-    B::Showlex
-    B::Stackobj
-    B::Terse
-    B::Xref
-    base
-    Benchmark
-    bigint
-    bignum
-    bigrat
-    blib
-    bytes
-    ByteLoader
-    Carp
-    CGI
-    CGI::Apache
-    CGI::Carp
-    CGI::Cookie
-    CGI::Fast
-    CGI::Pretty
-    CGI::Push
-    CGI::Switch
-    charnames
-    Class::ISA
-    Class::Struct
-    Config
-    constant
-    CPAN
-    CPAN::FirstTime
-    CPAN::Nox
-    Cwd
-    Data::Dumper
-    DB
-    DB_File
-    Devel::DProf
-    Devel::PPPort
-    Devel::SelfStubber
-    diagnostics
-    Digest
-    Digest::MD5
-    DirHandle
-    Dumpvalue
-    DynaLoader
-    encoding
-    English
-    Env
-    Errno
-    Exporter
-    ExtUtils::Command
-    ExtUtils::Command::MM
-    ExtUtils::Constant
-    ExtUtils::Embed
-    ExtUtils::Install
-    ExtUtils::Installed
-    ExtUtils::Liblist
-    ExtUtils::MakeMaker
-    ExtUtils::Manifest
-    ExtUtils::Miniperl
-    ExtUtils::Mkbootstrap
-    ExtUtils::Mksymlists
-    ExtUtils::MM
-    ExtUtils::MM_Any
-    ExtUtils::MM_BeOS
-    ExtUtils::MM_DOS
-    ExtUtils::MM_NW5
-    ExtUtils::MM_OS2
-    ExtUtils::MM_Unix
-    ExtUtils::MM_UWIN
-    ExtUtils::MM_VMS
-    ExtUtils::MM_Win32
-    ExtUtils::MY
-    ExtUtils::Packlist
-    ExtUtils::testlib
-    Fatal
-    Fcntl
-    fields
-    File::Basename
-    File::CheckTree
-    File::Compare
-    File::Copy
-    File::DosGlob
-    File::Find
-    File::Path
-    File::Spec
-    File::Spec::Cygwin
-    File::Spec::Mac
-    File::Spec::OS2
-    File::Spec::Unix
-    File::Spec::VMS
-    File::Spec::Win32
-    File::stat
-    File::Temp
-    FileCache
-    FileHandle
-    Filter::Simple 
-    Filter::Util::Call
-    FindBin
-    GDBM_File
-    Getopt::Long
-    Getopt::Std
-    Hash::Util
-    I18N::Collate
-    I18N::Langinfo
-    I18N::LangTags
-    I18N::LangTags::List
-    if
-    integer
-    IO
-    IO::File
-    IO::Handle
-    IO::Pipe
-    IO::Seekable
-    IO::Select
-    IO::Socket
-    IPC::Msg
-    IPC::Open2
-    IPC::Open3
-    IPC::Semaphore
-    IPC::SysV
-    less
-    lib
-    List::Util
-    locale
-    Math::BigFloat
-    Math::BigInt
-    Math::BigInt::Calc
-    Math::BigRat
-    Math::Complex
-    Math::Trig
-    MIME::Base64
-    MIME::QuotedPrint
-    NDBM_File
-    Net::Cmd
-    Net::Config
-    Net::Domain
-    Net::FTP
-    Net::hostent
-    Net::netent
-    Net::Netrc
-    Net::NNTP
-    Net::Ping
-    Net::POP3
-    Net::protoent
-    Net::servent
-    Net::SMTP
-    Net::Time
-    O
-    ODBM_File
-    Opcode
-    ops
-    overload
-    PerlIO
-    PerlIO::Scalar
-    PerlIO::Via
-    Pod::Functions
-    Pod::Html
-    Pod::ParseLink
-    Pod::Text
-    POSIX
-    re
-    Safe
-    Scalar::Util
-    SDBM_File
-    Search::Dict
-    SelectSaver
-    SelfLoader
-    Shell
-    sigtrap
-    Socket
-    sort
-    Storable
-    strict
-    subs
-    Switch
-    Symbol
-    Sys::Hostname
-    Sys::Syslog
-    Term::Cap
-    Term::Complete
-    Term::ReadLine
-    Test
-    Test::Builder
-    Test::Harness
-    Test::More
-    Test::Simple
-    Text::Abbrev
-    Text::Balanced
-    Text::ParseWords
-    Text::Soundex
-    Text::Tabs
-    Text::Wrap
-    Thread
-    Thread::Queue
-    Thread::Semaphore
-    Thread::Signal
-    Thread::Specific
-    Tie::Array
-    Tie::StdArray
-    Tie::File
-    Tie::Handle
-    Tie::Hash
-    Tie::Memoize 
-    Tie::RefHash
-    Tie::Scalar
-    Tie::SubstrHash
-    Time::gmtime
-    Time::HiRes
-    Time::Local
-    Time::localtime
-    Time::tm
-    UNIVERSAL
-    User::grent
-    User::pwent
-    utf8
-    vars
-    vmsish
-    XS::Typemap
-));
 
 # when this script is main program
 if ($0 eq __FILE__) {
@@ -394,38 +219,137 @@ my($package,$filename,$line,$subroutine,$hasargs,$wantarray,$evaltext,$is_requir
 
 # called any package not main
 if ($package ne 'main') {
-    croak <<END;
+    die <<END;
 $__FILE__: escape by manually command '$^X $__FILE__ "$filename" > "$__PACKAGE__::$filename"'
 and rewrite "use $package;" to "use $__PACKAGE__::$package;" of script "$0".
 END
 }
 
-# delete escaped script always while debug
-if (exists $ENV{'SJIS_DEBUG'}) {
-#   print STDERR "$__FILE__: delete $filename.e (\$ENV{'SJIS_DEBUG'}=$ENV{'SJIS_DEBUG'})\n";
-    Egbk::unlink "$filename.e";
+if (Egbk::e("$filename.e")) {
+    if (exists $ENV{'SJIS_DEBUG'}) {
+        Egbk::unlink "$filename.e";
+    }
+    else {
+        my $e_mtime   = (Egbk::stat("$filename.e"))[9];
+        my $mtime     = (Egbk::stat($filename))[9];
+        my $__mtime__ = (Egbk::stat($__FILE__))[9];
+        if (($e_mtime < $mtime) or ($mtime < $__mtime__)) {
+            Egbk::unlink "$filename.e";
+        }
+    }
 }
 
-# make escaped script
-my $e_script  = '';
-my $e_mtime   = (Egbk::stat("$filename.e"))[9];
-my $mtime     = (Egbk::stat($filename))[9];
-my $__mtime__ = (Egbk::stat($__FILE__))[9];
-if ((not Egbk::e("$filename.e")) or ($e_mtime < $mtime) or ($mtime < $__mtime__)) {
-    my $fh = Symbol::gensym();
-    sysopen($fh, "$filename.e", O_WRONLY | O_TRUNC | O_CREAT) or croak "$__FILE__: Can't open file: $filename.e";
-    print {$fh} GBK::escape_script($filename);
-    close($fh) or croak "$__FILE__: Can't close file: $filename.e";
+if (not Egbk::e("$filename.e")) {
+    my $fh = gensym();
+
+    if (eval q{ use Fcntl qw(O_WRONLY O_APPEND O_CREAT); 1 } and CORE::sysopen($fh,"$filename.e",&O_WRONLY|&O_APPEND|&O_CREAT)) {
+    }
+    else {
+        CORE::open($fh, ">>$filename.e") or die "$__FILE__: Can't write open file: $filename.e";
+    }
+
+    if (0) {
+    }
+    elsif (exists $ENV{'SJIS_NONBLOCK'}) {
+
+        # 7.18. Locking a File
+        # in Chapter 7. File Access
+        # of ISBN 0-596-00313-7 Perl Cookbook, 2nd Edition.
+        # (and so on)
+
+        eval q{
+            unless (flock($fh, LOCK_EX | LOCK_NB)) {
+                warn "$__FILE__: Can't immediately write-lock the file: $filename.e";
+                exit;
+            }
+        };
+    }
+    else {
+        eval q{ flock($fh, LOCK_EX) };
+    }
+
+    truncate($fh, 0) or die "$__FILE__: Can't truncate file: $filename.e";
+    seek($fh, 0, 0)  or die "$__FILE__: Can't seek file: $filename.e";
+
+    my $e_script = GBK::escape_script($filename);
+    print {$fh} $e_script;
+
+    my $mode = (Egbk::stat($filename))[2] & 0777;
+    chmod $mode, "$filename.e";
+
+    close($fh) or die "$__FILE__: Can't close file: $filename.e";
 }
 
-# P.565 Cleaning Up Your Environment
+# P.565 23.1.2. Cleaning Up Your Environment
 # in Chapter 23: Security
 # of ISBN 0-596-00027-8 Programming Perl Third Edition.
 
 # local $ENV{'PATH'} = '.';
 local @ENV{qw(IFS CDPATH ENV BASH_ENV)};
 
-exit system map {m/ $your_gap [ ] /oxms ? qq{"$_"} : $_} $^X, "$filename.e", @ARGV;
+my $fh = gensym();
+CORE::open($fh, "$filename.e") or die "$__FILE__: Can't read open file: $filename.e";
+
+if (0) {
+}
+elsif (exists $ENV{'SJIS_NONBLOCK'}) {
+    eval q{
+        unless (flock($fh, LOCK_SH | LOCK_NB)) {
+            warn "$__FILE__: Can't immediately read-lock the file: $filename.e";
+            exit;
+        }
+    };
+}
+else {
+    eval q{ flock($fh, LOCK_SH) };
+}
+
+my @switch = ();
+if ($^W) {
+    push @switch, '-w';
+}
+
+# DOS-like system
+if ($^O =~ /\A (?: MSWin32 | NetWare | symbian | dos ) \z/oxms) {
+    exit system
+        _escapeshellcmd_MSWin32($^X),
+
+# -I switch can not treat space included path
+#       (map { '-I' . _escapeshellcmd_MSWin32($_) } @INC),
+        (map { '-I' .                         $_  } @INC),
+
+        @switch,
+        '--',
+        map { _escapeshellcmd_MSWin32($_) } "$filename.e", @ARGV;
+}
+
+# UNIX-like system
+else {
+    exit system
+        _escapeshellcmd($^X),
+        (map { '-I' . _escapeshellcmd($_) } @INC),
+        @switch,
+        '--',
+        map { _escapeshellcmd($_) } "$filename.e", @ARGV;
+}
+
+# escape shell command line on DOS-like system
+sub _escapeshellcmd_MSWin32 {
+    my($word) = @_;
+    if ($word =~ m/ $your_gap [ ] /oxms) {
+        return qq{"$word"};
+    }
+    else {
+        return $word;
+    }
+}
+
+# escape shell command line on UNIX-like system
+sub _escapeshellcmd {
+    my($word) = @_;
+    $word =~ s/([\t\n\r\x20!"#\$%&'()*+;<=>?\[\\\]^`{|}~\x7F\xFF])/\\$1/g;
+    return $word;
+}
 
 # escape GBK script
 sub GBK::escape_script {
@@ -433,40 +357,48 @@ sub GBK::escape_script {
     my $e_script = '';
 
     # read GBK script
-    my $fh = Symbol::gensym();
-    sysopen($fh, $script, O_RDONLY) or croak "$__FILE__: Can't open file: $script";
+    my $fh = gensym();
+    CORE::open($fh, $script) or die "$__FILE__: Can't open file: $script";
     local $/ = undef; # slurp mode
     $_ = <$fh>;
-    close($fh) or croak "$__FILE__: Can't close file: $script";
+    close($fh) or die "$__FILE__: Can't close file: $script";
 
     if (m/^ use Egbk(?:\s+[0-9\.]*)?\s*; $/oxms) {
         return $_;
     }
     else {
 
-        # P.29 Comments
-        # in Chapter 2: Basic Perl Parsing Rules and Traps
-        # of ISBN 978-0072126761 Debugging Perl
-        # (and so on)
-
-        if (m/(.*#\s*line\s+\d+(?:\s*"(?:$q_char)*?")?\s*\n)/omsgc) {
+        # #! shebang line
+        if (s/\A(#!.+?\n)//oms) {
             my $head = $1;
             $head =~ s/\bjperl\b/perl/gi;
             $e_script .= $head;
         }
 
-        # P.850 use lib
-        # in Chapter 31: Pragmatic Modules
+        # DOS-like system header
+        if (s/\A(\@rem\s*=\s*'.*?'\s*;\s*\n)//oms) {
+            my $head = $1;
+            $head =~ s/\bjperl\b/perl/gi;
+            $e_script .= $head;
+        }
+
+        # P.618 Generating Perl in Other Languages
+        # in Chapter 24: Common Practices
         # of ISBN 0-596-00027-8 Programming Perl Third Edition.
 
-        $e_script .= sprintf(<<'END', $Egbk::VERSION); # require run-time routines version
-use FindBin;
-use lib $FindBin::Bin;
-use Egbk %s;
-END
+        if (s/(.*^#\s*line\s+\d+(?:\s+"(?:$q_char)+?")?\s*\n)//oms) {
+            my $head = $1;
+            $head =~ s/\bjperl\b/perl/gi;
+            $e_script .= $head;
+        }
+
+        # P.210 5.10.3.3. Match-time code evaluation
+        # in Chapter 5: Pattern Matching
+        # of ISBN 0-596-00027-8 Programming Perl Third Edition.
+
+        $e_script .= sprintf("use Egbk %s;\n%s", $Egbk::VERSION, $use_re_eval); # require run-time routines version
 
         # use GBK version qw(ord reverse);
-        use vars qw($function_ord $function_ord_ $function_reverse);
         $function_ord     = 'ord';
         $function_ord_    = 'ord';
         $function_reverse = 'reverse';
@@ -477,7 +409,7 @@ END
             if ($list =~ s/\A ([0-9]+(?:\.[0-9]*)) \s* //oxms) {
                 my $version = $1;
                 if ($version > $VERSION) {
-                    croak "$__FILE__: version $version required--this is only version $VERSION";
+                    die "$__FILE__: version $version required--this is only version $VERSION";
                 }
             }
 
@@ -486,61 +418,20 @@ END
                 local $@;
                 my @list = eval $list;
                 for (@list) {
-                    $function_ord     = 'Egbk::ord'     if m/\A ord \z/oxms;
-                    $function_ord_    = 'Egbk::ord_'    if m/\A ord \z/oxms;
-                    $function_reverse = 'Egbk::reverse' if m/\A reverse \z/oxms;
+                    $function_ord     = 'GBK::ord'     if m/\A ord \z/oxms;
+                    $function_ord_    = 'GBK::ord_'    if m/\A ord \z/oxms;
+                    $function_reverse = 'GBK::reverse' if m/\A reverse \z/oxms;
                 }
             }
         }
-    }
-
-    # use Tk; --> use GBK::Tk::Widget;
-    my $tkmodule = '';
-    for my $widget (qw(
-        Button
-        Canvas
-        Checkbutton
-        Entry
-        Frame
-        Label
-        Listbox
-        MainWindow
-        Message
-        Menu
-        Menubutton
-        Radiobutton
-        Scale
-        Text
-        Toplevel
-    )) {
-        if (m/ $widget /xms) {
-            $tkmodule .= "        eval qq{ use GBK::Tk::$widget; };\n";
-        }
-    }
-
-    my $use_tk = <<"USE_TK";
-BEGIN {
-    eval qq{ use GBK::Encode; };
-    if (\$] >= 5.007) {
-$tkmodule
-    }
-    else {
-        eval qq{ use GBK::Tk::Entry55; };
-        eval qq{ use GBK::Tk::MainWindow; };
-    }
-}
-USE_TK
-    if (s/^ (\s* use \s+ Tk [^:;]* ; \s*? \n) /$1$use_tk/oxmsg) {
-        s/ \b (MainWindow \s* -> \s* new) \b /GBK::Tk::$1/oxmsg;
-        s/^ (\s* use \s+ )(Tk::(?:Ballon|BrowseEntry|ColorEditor|Dialog|DialogBox|DirTree|FileSelect|HList|ROText|Table|TixGrid|TList|Tree) [^:;]* ; \s*? ) \n /BEGIN { eval qq{ $1$2 ${1}GBK::${2} }};\n/oxmsg;
-        s/^ (\s* use \s+ )(Tk::(?:LabFrame) [^:;]*) ; \s*? \n /BEGIN { eval qq{ $1$2; ${1}GBK::${2}55; }};\n/oxmsg;
     }
 
     $slash = 'm//';
 
     # Yes, I studied study yesterday.
 
-    # P.359 in The Study Function
+    # P.359 The Study Function
+    # in Chapter 7: Perl
     # of ISBN 0-596-00289-0 Mastering Regular Expressions, Second edition
 
     study $_;
@@ -549,7 +440,8 @@ USE_TK
 
     # one member of Tag-team
     #
-    # P.315 in "Tag-team" matching with /gc
+    # P.315 "Tag-team" matching with /gc
+    # in Chapter 7: Perl
     # of ISBN 0-596-00289-0 Mastering Regular Expressions, Second edition
 
     while (not /\G \z/oxgc) { # member
@@ -566,26 +458,25 @@ sub escape {
 
     # another member of Tag-team
     #
-    # P.315 in "Tag-team" matching with /gc
+    # P.315 "Tag-team" matching with /gc
+    # in Chapter 7: Perl
     # of ISBN 0-596-00289-0 Mastering Regular Expressions, Second edition
 
     if (/\G ( \n ) /oxgc) { # another member (and so on)
         my $heredoc = '';
-        if (scalar(keys %heredoc) >= 1) {
+        if (scalar(@heredoc_delimiter) >= 1) {
             $slash = 'm//';
-            my($longest_heredoc_delimiter) = sort { CORE::length($heredoc{$b}) <=> CORE::length($heredoc{$a}) } keys %heredoc;
-            if ($heredoc_qq >= 1) {
-                $heredoc = e_heredoc($heredoc{$longest_heredoc_delimiter});
-            }
-            else {
-                $heredoc =           $heredoc{$longest_heredoc_delimiter};
-            }
+
+            $heredoc = join '', @heredoc;
+            @heredoc = ();
 
             # skip here document
-            /\G .*? \n $longest_heredoc_delimiter \n/xmsgc;
+            for my $heredoc_delimiter (@heredoc_delimiter) {
+                /\G .*? \n $heredoc_delimiter \n/xmsgc;
+            }
+            @heredoc_delimiter = ();
 
-            %heredoc = ();
-            $heredoc_qq = 0;
+            $here_script = '';
         }
         return "\n" . $heredoc;
     }
@@ -593,12 +484,41 @@ sub escape {
 # ignore space, comment
     elsif (/\G (\s+|\#.*) /oxgc) { return $1; }
 
+# if (, elsif (, unless (, while (, until (, given ( and when (
+
+    # given, when
+    #
+    # P.225 The given Statement
+    # in Chapter 15: Smart Matching and given-when
+    # of ISBN 978-0-596-52010-6 Learning Perl, Fifth Edition
+
+    elsif (/\G ( (?: if | elsif | unless | while | until | given | when ) \s* \( ) /oxgc) {
+        $slash = 'm//';
+        return $1;
+    }
+
 # scalar variable ($scalar = ...) =~ tr///;
-    elsif (/\G ( \( \s* (?: local \s+ | my \s+ | our \s+ | state \s+ )? \$ $qq_scalar ) /oxgc) {
+# scalar variable ($scalar = ...) =~ s///;
+
+    # state
+    #
+    # P.68 Persistent, Private Variables
+    # in Chapter 4: Subroutines
+    # of ISBN 978-0-596-52010-6 Learning Perl, Fifth Edition
+    # (and so on)
+
+    elsif (/\G ( \( \s* (?: local \b | my \b | our \b | state \b )? \s* \$ $qq_scalar ) /oxgc) {
         my $e_string = e_string($1);
 
-        if (/\G ( \s* = $qq_paren \) ) \s* =~ \s* (?= (?: tr|y) \b ) /oxgc) {
+        if (/\G ( \s* = $qq_paren \) ) ( \s* (?: =~ | !~ ) \s* ) (?= (?: tr|y) \b ) /oxgc) {
             $tr_variable = $e_string . e_string($1);
+            $bind_operator = $2;
+            $slash = 'm//';
+            return '';
+        }
+        elsif (/\G ( \s* = $qq_paren \) ) ( \s* (?: =~ | !~ ) \s* ) (?= s \b ) /oxgc) {
+            $sub_variable = $e_string . e_string($1);
+            $bind_operator = $2;
             $slash = 'm//';
             return '';
         }
@@ -609,11 +529,19 @@ sub escape {
     }
 
 # scalar variable $scalar =~ tr///;
+# scalar variable $scalar =~ s///;
     elsif (/\G ( \$ $qq_scalar ) /oxgc) {
         my $scalar = e_string($1);
 
-        if (/\G \s* =~ \s* (?= (?: tr|y) \b ) /oxgc) {
+        if (/\G ( \s* (?: =~ | !~ ) \s* ) (?= (?: tr|y) \b ) /oxgc) {
             $tr_variable = $scalar;
+            $bind_operator = $1;
+            $slash = 'm//';
+            return '';
+        }
+        elsif (/\G ( \s* (?: =~ | !~ ) \s* ) (?= s \b ) /oxgc) {
+            $sub_variable = $scalar;
+            $bind_operator = $1;
             $slash = 'm//';
             return '';
         }
@@ -627,8 +555,13 @@ sub escape {
     elsif (/\G ( [,;] ) /oxgc) {
         $slash = 'm//';
 
-        # clear tr variable
+        # clear tr/// variable
         $tr_variable  = '';
+
+        # clear s/// variable
+        $sub_variable  = '';
+
+        $bind_operator = '';
 
         return $1;
     }
@@ -638,8 +571,64 @@ sub escape {
         return $1;
     }
 
+# $0 --> $0
+    elsif (/\G ( \$ 0 ) /oxmsgc) {
+        $slash = 'div';
+        return $1;
+    }
+    elsif (/\G ( \$ \{ \s* 0 \s* \} ) /oxmsgc) {
+        $slash = 'div';
+        return $1;
+    }
+
+# $$ --> $$
+    elsif (/\G ( \$ \$ ) (?![\w\{]) /oxmsgc) {
+        $slash = 'div';
+        return $1;
+    }
+
+# $1, $2, $3 --> $2, $3, $4 (only when multibyte anchoring is enable)
+    elsif (/\G \$ ([1-9][0-9]*) /oxmsgc) {
+        $slash = 'div';
+        return e_capture($1);
+    }
+    elsif (/\G \$ \{ \s* ([1-9][0-9]*) \s* \} /oxmsgc) {
+        $slash = 'div';
+        return e_capture($1);
+    }
+
+# $$foo[ ... ] --> $ $foo->[ ... ]
+    elsif (/\G \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \[ .+? \] ) /oxmsgc) {
+        $slash = 'div';
+        return e_capture($1.'->'.$2);
+    }
+
+# $$foo{ ... } --> $ $foo->{ ... }
+    elsif (/\G \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \{ .+? \} ) /oxmsgc) {
+        $slash = 'div';
+        return e_capture($1.'->'.$2);
+    }
+
+# $$foo
+    elsif (/\G \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) /oxmsgc) {
+        $slash = 'div';
+        return e_capture($1);
+    }
+
+# ${ foo }
+    elsif (/\G \$ \s* \{ ( \s* [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* \s* ) \} /oxmsgc) {
+        $slash = 'div';
+        return '${' . $1 . '}';
+    }
+
+# ${ ... }
+    elsif (/\G \$ \s* \{ \s* ( $qq_brace ) \s* \} /oxmsgc) {
+        $slash = 'div';
+        return e_capture($1);
+    }
+
 # variable or function
-    #                  $ @ % & *     $#
+    #                  $ @ % & *     $ #
     elsif (/\G ( (?: [\$\@\%\&\*] | \$\# | -> | \b sub \b) \s* (?: split|chop|index|rindex|lc|uc|chr|ord|reverse|tr|y|q|qq|qx|qw|m|s|qr|glob|lstat|opendir|stat|unlink|chdir) ) \b /oxmsgc) {
         $slash = 'div';
         return $1;
@@ -674,58 +663,207 @@ sub escape {
         return 'while ($_ = Egbk::glob';
     }
 
-# doit if, doit unless, doit while, doit until, doit for
-    elsif (m{\G \b ( if | unless | while | until | for ) \b }oxgc) { $slash = 'm//'; return $1;  }
+# doit if, doit unless, doit while, doit until, doit for, doit when
+    elsif (m{\G \b ( if | unless | while | until | for | when ) \b }oxgc) { $slash = 'm//'; return $1;  }
 
 # functions of package Egbk
-    elsif (m{\G \b (CORE::(?:split|chop|index|rindex|lc|uc|chr|ord|reverse)) \b }oxgc) { $slash = 'm//'; return $1;    }
-    elsif (m{\G \b chop \b    (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::chop';         }
-    elsif (m{\G \b index \b   (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::index';        }
-    elsif (m{\G \b rindex \b  (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::rindex';       }
-    elsif (m{\G \b lc    (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return   'Egbk::lc';           }
-    elsif (m{\G \b uc    (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return   'Egbk::uc';           }
+    elsif (m{\G \b (CORE::(?:split|chop|index|rindex|lc|uc|chr|ord|reverse|open|binmode)) \b }oxgc) { $slash = 'm//'; return $1; }
+    elsif (m{\G \b bytes::substr \b (?! \s* => )                }oxgc) { $slash = 'm//'; return 'substr';              }
+    elsif (m{\G \b chop \b          (?! \s* => )                }oxgc) { $slash = 'm//'; return 'Egbk::chop';         }
+    elsif (m{\G \b bytes::index \b  (?! \s* => )                }oxgc) { $slash = 'm//'; return 'index';               }
+    elsif (m{\G \b GBK::index \b   (?! \s* => )                }oxgc) { $slash = 'm//'; return 'GBK::index';         }
+    elsif (m{\G \b index \b         (?! \s* => )                }oxgc) { $slash = 'm//'; return 'Egbk::index';        }
+    elsif (m{\G \b bytes::rindex \b (?! \s* => )                }oxgc) { $slash = 'm//'; return 'rindex';              }
+    elsif (m{\G \b GBK::rindex \b  (?! \s* => )                }oxgc) { $slash = 'm//'; return 'GBK::rindex';        }
+    elsif (m{\G \b rindex \b        (?! \s* => )                }oxgc) { $slash = 'm//'; return 'Egbk::rindex';       }
+    elsif (m{\G \b lc      (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return 'Egbk::lc';           }
+    elsif (m{\G \b lcfirst (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return 'Egbk::lcfirst';      }
+    elsif (m{\G \b uc      (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return 'Egbk::uc';           }
+    elsif (m{\G \b ucfirst (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return 'Egbk::ucfirst';      }
 
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+    \s* (\") ((?:$qq_char)+?)             (\") }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_qq('',  $2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\#) ((?:$qq_char)+?)             (\#) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\() ((?:$qq_paren)+?)            (\)) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\{) ((?:$qq_brace)+?)            (\}) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\[) ((?:$qq_bracket)+?)          (\]) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\<) ((?:$qq_angle)+?)            (\>) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\S) ((?:$qq_char)+?)             (\3) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
+    # stacked file test operators
+    #
+    # P.179 File Test Operators
+    # in Chapter 12: File Tests
+    # of ISBN 978-0-596-52010-6 Learning Perl, Fifth Edition
+    # (and so on)
 
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+    \s* (\') ((?:\\\1|\\\\|$q_char)+?)    (\') }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_q ('',  $2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\#) ((?:\\\#|\\\\|$q_char)+?)    (\#) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\() ((?:\\\)|\\\\|$q_paren)+?)   (\)) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\{) ((?:\\\}|\\\\|$q_brace)+?)   (\}) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\[) ((?:\\\]|\\\\|$q_bracket)+?) (\]) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\<) ((?:\\\>|\\\\|$q_angle)+?)   (\>) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\S) ((?:\\\1|\\\\|$q_char)+?)    (\3) }oxgc) { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G (-[rwxoRWXOezfdlpSbcugkTB](?:\s+-[rwxoRWXOezfdlpSbcugkTB])+)
+                                                          \s* (\") ((?:$qq_char)+?)             (\") }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_qq('',  $2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\#) ((?:$qq_char)+?)             (\#) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\() ((?:$qq_paren)+?)            (\)) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\{) ((?:$qq_brace)+?)            (\}) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\[) ((?:$qq_bracket)+?)          (\]) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\<) ((?:$qq_angle)+?)            (\>) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\S) ((?:$qq_char)+?)             (\3) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; }
 
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s* (\$ \w+(?: ::\w+)* (?: (?: ->)? (?: \( (?:$qq_paren)*? \) | \{ (?:$qq_brace)+? \} | \[ (?:$qq_bracket)+? \] ) )*) }oxgc)
-                                                                                                          { $slash = 'm//'; return "Egbk::$1($2)"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s* \( ((?:$qq_paren)*?) \) }oxgc)                       { $slash = 'm//'; return "Egbk::$1($2)"; }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) (?= \s+ [a-z]+) }oxgc)                                   { $slash = 'm//'; return "Egbk::$1";     }
-    elsif (m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ (\w+) }oxgc)                                         { $slash = 'm//'; return "Egbk::$1($2)"; }
+    elsif (m{\G (-[rwxoRWXOezfdlpSbcugkTB](?:\s+-[rwxoRWXOezfdlpSbcugkTB])+)
+                                                          \s* (\') ((?:\\\1|\\\\|$q_char)+?)    (\') }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_q ('',  $2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\#) ((?:\\\#|\\\\|$q_char)+?)    (\#) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\() ((?:\\\)|\\\\|$q_paren)+?)   (\)) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\{) ((?:\\\}|\\\\|$q_brace)+?)   (\}) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\[) ((?:\\\]|\\\\|$q_bracket)+?) (\]) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\<) ((?:\\\>|\\\\|$q_angle)+?)   (\>) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\S) ((?:\\\1|\\\\|$q_char)+?)    (\3) }oxgc) { $slash = 'm//'; return "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; }
 
-    elsif (m{\G \b lstat (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return   'Egbk::lstat';        }
-    elsif (m{\G \b stat  (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return   'Egbk::stat';         }
-    elsif (m{\G \b chr   (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return   'Egbk::chr';          }
-    elsif (m{\G \b ord   (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'div'; return   $function_ord;         }
-    elsif (m{\G \b glob  (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return   'Egbk::glob';         }
-    elsif (m{\G \b lc \b      (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::lc_';          }
-    elsif (m{\G \b uc \b      (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::uc_';          }
-    elsif (m{\G    -([rwxoRWXOezsfdlpSbctugkTBMAC])
-                           \b (?! \s* => )                    }oxgc) { $slash = 'm//'; return   "Egbk::${1}_";        }
-    elsif (m{\G \b lstat \b   (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::lstat_';       }
-    elsif (m{\G \b stat \b    (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::stat_';        }
-    elsif (m{\G \b chr \b     (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::chr_';         }
-    elsif (m{\G \b ord \b     (?! \s* => )                    }oxgc) { $slash = 'div'; return   $function_ord_;        }
-    elsif (m{\G \b glob \b    (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::glob_';        }
-    elsif (m{\G \b reverse \b (?! \s* => )                    }oxgc) { $slash = 'm//'; return   $function_reverse;     }
-    elsif (m{\G \b opendir (\s* \( \s*) (?=[A-Za-z_])         }oxgc) { $slash = 'm//'; return   "Egbk::opendir$1*";   }
-    elsif (m{\G \b opendir (\s+)        (?=[A-Za-z_])         }oxgc) { $slash = 'm//'; return   "Egbk::opendir$1*";   }
-    elsif (m{\G \b unlink \b  (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::unlink';       }
-    elsif (m{\G \b chdir \b   (?! \s* => )                    }oxgc) { $slash = 'm//'; return   'Egbk::chdir';        }
+    elsif (m{\G (-[rwxoRWXOezfdlpSbcugkTB](?:\s+-[rwxoRWXOezfdlpSbcugkTB])+) (\$ \w+(?: ::\w+)* (?: (?: ->)? (?: \( (?:$qq_paren)*? \) | \{ (?:$qq_brace)+? \} | \[ (?:$qq_bracket)+? \] ) )*) }oxgc)
+                                                                                                            { $slash = 'm//'; return "Egbk::filetest(qw($1),$2)"; }
+    elsif (m{\G (-[rwxoRWXOezfdlpSbcugkTB](?:\s+-[rwxoRWXOezfdlpSbcugkTB])+) \( ((?:$qq_paren)*?) \) }oxgc)
+                                                                                                            { $slash = 'm//'; return "Egbk::filetest(qw($1),$2)"; }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) (?= [a-z]+) }oxgc)                                   { $slash = 'm//'; return "Egbk::filetest qw($1),";    }
+    elsif (m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) (\w+) }oxgc)                                         { $slash = 'm//'; return "Egbk::filetest(qw($1),$2)"; }
+
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+    \s* (\") ((?:$qq_char)+?)             (\") }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_qq('',  $2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\#) ((?:$qq_char)+?)             (\#) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\() ((?:$qq_paren)+?)            (\)) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\{) ((?:$qq_brace)+?)            (\}) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\[) ((?:$qq_bracket)+?)          (\]) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\<) ((?:$qq_angle)+?)            (\>) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\S) ((?:$qq_char)+?)             (\3) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; }
+
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+    \s* (\') ((?:\\\1|\\\\|$q_char)+?)    (\') }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_q ('',  $2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\#) ((?:\\\#|\\\\|$q_char)+?)    (\#) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\() ((?:\\\)|\\\\|$q_paren)+?)   (\)) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\{) ((?:\\\}|\\\\|$q_brace)+?)   (\}) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\[) ((?:\\\]|\\\\|$q_bracket)+?) (\]) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\<) ((?:\\\>|\\\\|$q_angle)+?)   (\>) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\S) ((?:\\\1|\\\\|$q_char)+?)    (\3) }oxgc)    { $slash = 'm//'; return "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; }
+
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s* (\$ \w+(?: ::\w+)* (?: (?: ->)? (?: \( (?:$qq_paren)*? \) | \{ (?:$qq_brace)+? \} | \[ (?:$qq_bracket)+? \] ) )*) }oxgc)
+                                                                                                            { $slash = 'm//'; return "Egbk::$1($2)";      }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s* \( ((?:$qq_paren)*?) \) }oxgc)                          { $slash = 'm//'; return "Egbk::$1($2)";      }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) (?= \s+ [a-z]+) }oxgc)                                      { $slash = 'm//'; return "Egbk::$1";          }
+    elsif (m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ (\w+) }oxgc)                                            { $slash = 'm//'; return "Egbk::$1(::"."$2)"; }
+    elsif (m{\G -(t)                            \s+ (\w+) }oxgc)                                            { $slash = 'm//'; return "-t $2";              }
+    elsif (m{\G \b lstat         (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return 'Egbk::lstat';             }
+    elsif (m{\G \b stat          (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return 'Egbk::stat';              }
+
+    # "-s '' ..." means file test "-s 'filename' ..." (not means "- s/// ...")
+    elsif (m{\G -s                               \s+    \s* (\") ((?:$qq_char)+?)             (\") }oxgc)    { $slash = 'm//'; return '-s ' . e_qq('',  $1,$3,$2); }
+    elsif (m{\G -s                               \s+ qq \s* (\#) ((?:$qq_char)+?)             (\#) }oxgc)    { $slash = 'm//'; return '-s ' . e_qq('qq',$1,$3,$2); }
+    elsif (m{\G -s                               \s+ qq \s* (\() ((?:$qq_paren)+?)            (\)) }oxgc)    { $slash = 'm//'; return '-s ' . e_qq('qq',$1,$3,$2); }
+    elsif (m{\G -s                               \s+ qq \s* (\{) ((?:$qq_brace)+?)            (\}) }oxgc)    { $slash = 'm//'; return '-s ' . e_qq('qq',$1,$3,$2); }
+    elsif (m{\G -s                               \s+ qq \s* (\[) ((?:$qq_bracket)+?)          (\]) }oxgc)    { $slash = 'm//'; return '-s ' . e_qq('qq',$1,$3,$2); }
+    elsif (m{\G -s                               \s+ qq \s* (\<) ((?:$qq_angle)+?)            (\>) }oxgc)    { $slash = 'm//'; return '-s ' . e_qq('qq',$1,$3,$2); }
+    elsif (m{\G -s                               \s+ qq \s* (\S) ((?:$qq_char)+?)             (\3) }oxgc)    { $slash = 'm//'; return '-s ' . e_qq('qq',$1,$3,$2); }
+
+    elsif (m{\G -s                               \s+    \s* (\') ((?:\\\1|\\\\|$q_char)+?)    (\') }oxgc)    { $slash = 'm//'; return '-s ' . e_q ('',  $1,$3,$2); }
+    elsif (m{\G -s                               \s+ q  \s* (\#) ((?:\\\#|\\\\|$q_char)+?)    (\#) }oxgc)    { $slash = 'm//'; return '-s ' . e_q ('q', $1,$3,$2); }
+    elsif (m{\G -s                               \s+ q  \s* (\() ((?:\\\)|\\\\|$q_paren)+?)   (\)) }oxgc)    { $slash = 'm//'; return '-s ' . e_q ('q', $1,$3,$2); }
+    elsif (m{\G -s                               \s+ q  \s* (\{) ((?:\\\}|\\\\|$q_brace)+?)   (\}) }oxgc)    { $slash = 'm//'; return '-s ' . e_q ('q', $1,$3,$2); }
+    elsif (m{\G -s                               \s+ q  \s* (\[) ((?:\\\]|\\\\|$q_bracket)+?) (\]) }oxgc)    { $slash = 'm//'; return '-s ' . e_q ('q', $1,$3,$2); }
+    elsif (m{\G -s                               \s+ q  \s* (\<) ((?:\\\>|\\\\|$q_angle)+?)   (\>) }oxgc)    { $slash = 'm//'; return '-s ' . e_q ('q', $1,$3,$2); }
+    elsif (m{\G -s                               \s+ q  \s* (\S) ((?:\\\1|\\\\|$q_char)+?)    (\3) }oxgc)    { $slash = 'm//'; return '-s ' . e_q ('q', $1,$3,$2); }
+
+    elsif (m{\G -s                               \s* (\$ \w+(?: ::\w+)* (?: (?: ->)? (?: \( (?:$qq_paren)*? \) | \{ (?:$qq_brace)+? \} | \[ (?:$qq_bracket)+? \] ) )*) }oxgc)
+                                                                                                             { $slash = 'm//'; return "-s $1";   }
+    elsif (m{\G -s                               \s* \( ((?:$qq_paren)*?) \) }oxgc)                          { $slash = 'm//'; return "-s ($1)"; }
+    elsif (m{\G -s                               (?= \s+ [a-z]+) }oxgc)                                      { $slash = 'm//'; return '-s';      }
+    elsif (m{\G -s                               \s+ (\w+) }oxgc)                                            { $slash = 'm//'; return "-s $1";   }
+
+    elsif (m{\G \b bytes::length (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return 'length';                   }
+    elsif (m{\G \b bytes::chr    (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return 'chr';                      }
+    elsif (m{\G \b chr           (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return 'Egbk::chr';               }
+    elsif (m{\G \b bytes::ord    (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'div'; return 'ord';                      }
+    elsif (m{\G \b ord           (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'div'; return $function_ord;              }
+    elsif (m{\G \b glob          (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $slash = 'm//'; return 'Egbk::glob';              }
+    elsif (m{\G \b lc \b         (?! \s* => )                         }oxgc) { $slash = 'm//'; return 'Egbk::lc_';               }
+    elsif (m{\G \b lcfirst \b    (?! \s* => )                         }oxgc) { $slash = 'm//'; return 'Egbk::lcfirst_';          }
+    elsif (m{\G \b uc \b         (?! \s* => )                         }oxgc) { $slash = 'm//'; return 'Egbk::uc_';               }
+    elsif (m{\G \b ucfirst \b    (?! \s* => )                         }oxgc) { $slash = 'm//'; return 'Egbk::ucfirst_';          }
+    elsif (m{\G    (-[rwxoRWXOezfdlpSbcugkTB](?:\s+-[rwxoRWXOezfdlpSbcugkTB])+)
+                           \b    (?! \s* => )                         }oxgc) { $slash = 'm//'; return "Egbk::filetest_(qw($1))"; }
+    elsif (m{\G    -([rwxoRWXOezsfdlpSbcugkTBMAC])
+                           \b    (?! \s* => )                         }oxgc) { $slash = 'm//'; return "Egbk::${1}_";             }
+    elsif (m{\G \b lstat \b      (?! \s* => )                         }oxgc) { $slash = 'm//'; return 'Egbk::lstat_';            }
+    elsif (m{\G \b stat \b       (?! \s* => )                         }oxgc) { $slash = 'm//'; return 'Egbk::stat_';             }
+    elsif (m{\G    -s \b         (?! \s* => )                         }oxgc) { $slash = 'm//'; return '-s ';                      }
+
+    elsif (m{\G \b bytes::length \b (?! \s* => )                      }oxgc) { $slash = 'm//'; return 'length';                   }
+    elsif (m{\G \b bytes::chr \b    (?! \s* => )                      }oxgc) { $slash = 'm//'; return 'chr';                      }
+    elsif (m{\G \b chr \b           (?! \s* => )                      }oxgc) { $slash = 'm//'; return 'Egbk::chr_';              }
+    elsif (m{\G \b bytes::ord \b    (?! \s* => )                      }oxgc) { $slash = 'div'; return 'ord';                      }
+    elsif (m{\G \b ord \b           (?! \s* => )                      }oxgc) { $slash = 'div'; return $function_ord_;             }
+    elsif (m{\G \b glob \b          (?! \s* => )                      }oxgc) { $slash = 'm//'; return 'Egbk::glob_';             }
+    elsif (m{\G \b reverse \b       (?! \s* => )                      }oxgc) { $slash = 'm//'; return $function_reverse;          }
+    elsif (m{\G \b opendir (\s* \( \s*) (?=[A-Za-z_])                 }oxgc) { $slash = 'm//'; return "Egbk::opendir$1*";        }
+    elsif (m{\G \b opendir (\s+)        (?=[A-Za-z_])                 }oxgc) { $slash = 'm//'; return "Egbk::opendir$1*";        }
+    elsif (m{\G \b unlink \b     (?! \s* => )                         }oxgc) { $slash = 'm//'; return 'Egbk::unlink';            }
+
+# chdir
+    elsif (m{\G \b (chdir) \b    (?! \s* => ) }oxgc) {
+        $slash = 'm//';
+
+        my $e = 'Egbk::chdir';
+
+        while (/\G ( \s+ | \( | \#.* ) /oxgc) {
+            $e .= $1;
+        }
+
+# end of chdir
+        if    (/\G (?= [,;\)\}\]] )          /oxgc) { return $e;                 }
+
+# chdir scalar value
+        elsif (/\G ( [\$\@\&\*] $qq_scalar ) /oxgc) { return $e . e_string($1);  }
+
+# chdir qq//
+        elsif (/\G \b (qq) \b /oxgc) {
+            if (/\G (\#) ((?:$qq_char)*?) (\#) /oxgc)                        { return $e . e_chdir('qq',$1,$3,$2);   } # qq# #  --> qr # #
+            else {
+                while (not /\G \z/oxgc) {
+                    if    (/\G (\s+|\#.*)                             /oxgc) { $e .= $1; }
+                    elsif (/\G (\()          ((?:$qq_paren)*?)   (\)) /oxgc) { return $e . e_chdir('qq',$1,$3,$2);   } # qq ( ) --> qr ( )
+                    elsif (/\G (\{)          ((?:$qq_brace)*?)   (\}) /oxgc) { return $e . e_chdir('qq',$1,$3,$2);   } # qq { } --> qr { }
+                    elsif (/\G (\[)          ((?:$qq_bracket)*?) (\]) /oxgc) { return $e . e_chdir('qq',$1,$3,$2);   } # qq [ ] --> qr [ ]
+                    elsif (/\G (\<)          ((?:$qq_angle)*?)   (\>) /oxgc) { return $e . e_chdir('qq',$1,$3,$2);   } # qq < > --> qr < >
+                    elsif (/\G ([*\-:?\\^|]) ((?:$qq_char)*?)    (\1) /oxgc) { return $e . e_chdir('qq','{','}',$2); } # qq | | --> qr { }
+                    elsif (/\G (\S)          ((?:$qq_char)*?)    (\1) /oxgc) { return $e . e_chdir('qq',$1,$3,$2);   } # qq * * --> qr * *
+                }
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
+            }
+        }
+
+# chdir q//
+        elsif (/\G \b (q) \b /oxgc) {
+            if (/\G (\#) ((?:\\\#|\\\\|$q_char)*?) (\#) /oxgc)                    { return $e . e_chdir_q('q',$1,$3,$2);   } # q# #  --> qr # #
+            else {
+                while (not /\G \z/oxgc) {
+                    if    (/\G (\s+|\#.*)                                  /oxgc) { $e .= $1; }
+                    elsif (/\G (\() ((?:\\\\|\\\)|\\\(|$q_paren)*?)   (\)) /oxgc) { return $e . e_chdir_q('q',$1,$3,$2);   } # q ( ) --> qr ( )
+                    elsif (/\G (\{) ((?:\\\\|\\\}|\\\{|$q_brace)*?)   (\}) /oxgc) { return $e . e_chdir_q('q',$1,$3,$2);   } # q { } --> qr { }
+                    elsif (/\G (\[) ((?:\\\\|\\\]|\\\[|$q_bracket)*?) (\]) /oxgc) { return $e . e_chdir_q('q',$1,$3,$2);   } # q [ ] --> qr [ ]
+                    elsif (/\G (\<) ((?:\\\\|\\\>|\\\<|$q_angle)*?)   (\>) /oxgc) { return $e . e_chdir_q('q',$1,$3,$2);   } # q < > --> qr < >
+                    elsif (/\G ([*\-:?\\^|])       ((?:$q_char)*?)    (\1) /oxgc) { return $e . e_chdir_q('q','{','}',$2); } # q | | --> qr { }
+                    elsif (/\G (\S) ((?:\\\\|\\\1|     $q_char)*?)    (\1) /oxgc) { return $e . e_chdir_q('q',$1,$3,$2);   } # q * * --> qr * *
+                }
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
+            }
+        }
+
+# chdir ''
+        elsif (/\G (\') /oxgc) {
+            my $q_string = '';
+            while (not /\G \z/oxgc) {
+                if    (/\G (\\\\)    /oxgc) { $q_string .= $1; }
+                elsif (/\G (\\\')    /oxgc) { $q_string .= $1; }
+                elsif (/\G \'        /oxgc)                                       { return $e . e_chdir_q('',"'","'",$q_string); }
+                elsif (/\G ($q_char) /oxgc) { $q_string .= $1; }
+            }
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
+        }
+
+# chdir ""
+        elsif (/\G (\") /oxgc) {
+            my $qq_string = '';
+            while (not /\G \z/oxgc) {
+                if    (/\G (\\\\)    /oxgc) { $qq_string .= $1; }
+                elsif (/\G (\\\")    /oxgc) { $qq_string .= $1; }
+                elsif (/\G \"        /oxgc)                                       { return $e . e_chdir('','"','"',$qq_string); }
+                elsif (/\G ($q_char) /oxgc) { $qq_string .= $1; }
+            }
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
+        }
+    }
 
 # split
     elsif (m{\G \b (split) \b (?! \s* => ) }oxgc) {
@@ -761,36 +899,36 @@ sub escape {
 
 # split qq//
         elsif (/\G \b (qq) \b /oxgc) {
-            if (/\G (\#) ((?:$qq_char)*?) (\#) /oxgc)                             { return $e . e_split('qr',$1,$3,$2,'');   } # qq# #  --> qr # #
+            if (/\G (\#) ((?:$qq_char)*?) (\#) /oxgc)                        { return $e . e_split('qr',$1,$3,$2,'');   } # qq# #  --> qr # #
             else {
                 while (not /\G \z/oxgc) {
-                    if    (/\G (\s+|\#.*)                                  /oxgc) { $e .= $1; }
-                    elsif (/\G (\()               ((?:$qq_paren)*?)   (\)) /oxgc) { return $e . e_split('qr',$1,$3,$2,'');   } # qq ( ) --> qr ( )
-                    elsif (/\G (\{)               ((?:$qq_brace)*?)   (\}) /oxgc) { return $e . e_split('qr',$1,$3,$2,'');   } # qq { } --> qr { }
-                    elsif (/\G (\[)               ((?:$qq_bracket)*?) (\]) /oxgc) { return $e . e_split('qr',$1,$3,$2,'');   } # qq [ ] --> qr [ ]
-                    elsif (/\G (\<)               ((?:$qq_angle)*?)   (\>) /oxgc) { return $e . e_split('qr',$1,$3,$2,'');   } # qq < > --> qr < >
-                    elsif (/\G ([\*\-\:\?\\\^\|]) ((?:$qq_char)*?)    (\1) /oxgc) { return $e . e_split('qr','{','}',$2,''); } # qq | | --> qr { }
-                    elsif (/\G (\S)               ((?:$qq_char)*?)    (\1) /oxgc) { return $e . e_split('qr',$1,$3,$2,'');   } # qq * * --> qr * *
+                    if    (/\G (\s+|\#.*)                             /oxgc) { $e .= $1; }
+                    elsif (/\G (\()          ((?:$qq_paren)*?)   (\)) /oxgc) { return $e . e_split('qr',$1,$3,$2,'');   } # qq ( ) --> qr ( )
+                    elsif (/\G (\{)          ((?:$qq_brace)*?)   (\}) /oxgc) { return $e . e_split('qr',$1,$3,$2,'');   } # qq { } --> qr { }
+                    elsif (/\G (\[)          ((?:$qq_bracket)*?) (\]) /oxgc) { return $e . e_split('qr',$1,$3,$2,'');   } # qq [ ] --> qr [ ]
+                    elsif (/\G (\<)          ((?:$qq_angle)*?)   (\>) /oxgc) { return $e . e_split('qr',$1,$3,$2,'');   } # qq < > --> qr < >
+                    elsif (/\G ([*\-:?\\^|]) ((?:$qq_char)*?)    (\1) /oxgc) { return $e . e_split('qr','{','}',$2,''); } # qq | | --> qr { }
+                    elsif (/\G (\S)          ((?:$qq_char)*?)    (\1) /oxgc) { return $e . e_split('qr',$1,$3,$2,'');   } # qq * * --> qr * *
                 }
-                croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
             }
         }
 
 # split qr//
         elsif (/\G \b (qr) \b /oxgc) {
-            if (/\G (\#) ((?:$qq_char)*?) (\#) ([imosxp]*) /oxgc)                             { return $e . e_split  ('qr',$1,$3,$2,$4);   } # qr# #
+            if (/\G (\#) ((?:$qq_char)*?) (\#) ([imosxp]*) /oxgc)                        { return $e . e_split  ('qr',$1,$3,$2,$4);   } # qr# #
             else {
                 while (not /\G \z/oxgc) {
-                    if    (/\G (\s+|\#.*)                                              /oxgc) { $e .= $1; }
-                    elsif (/\G (\()               ((?:$qq_paren)*?)   (\)) ([imosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # qr ( )
-                    elsif (/\G (\{)               ((?:$qq_brace)*?)   (\}) ([imosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # qr { }
-                    elsif (/\G (\[)               ((?:$qq_bracket)*?) (\]) ([imosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # qr [ ]
-                    elsif (/\G (\<)               ((?:$qq_angle)*?)   (\>) ([imosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # qr < >
-                    elsif (/\G (\')               ((?:$qq_char)*?)    (\') ([imosxp]*) /oxgc) { return $e . e_split_q('qr',$1, $3, $2,$4); } # qr ' '
-                    elsif (/\G ([\*\-\:\?\\\^\|]) ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { return $e . e_split  ('qr','{','}',$2,$4); } # qr | | --> qr { }
-                    elsif (/\G (\S)               ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # qr * *
+                    if    (/\G (\s+|\#.*)                                         /oxgc) { $e .= $1; }
+                    elsif (/\G (\()          ((?:$qq_paren)*?)   (\)) ([imosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # qr ( )
+                    elsif (/\G (\{)          ((?:$qq_brace)*?)   (\}) ([imosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # qr { }
+                    elsif (/\G (\[)          ((?:$qq_bracket)*?) (\]) ([imosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # qr [ ]
+                    elsif (/\G (\<)          ((?:$qq_angle)*?)   (\>) ([imosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # qr < >
+                    elsif (/\G (\')          ((?:$qq_char)*?)    (\') ([imosxp]*) /oxgc) { return $e . e_split_q('qr',$1, $3, $2,$4); } # qr ' '
+                    elsif (/\G ([*\-:?\\^|]) ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { return $e . e_split  ('qr','{','}',$2,$4); } # qr | | --> qr { }
+                    elsif (/\G (\S)          ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # qr * *
                 }
-                croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
             }
         }
 
@@ -798,34 +936,34 @@ sub escape {
         elsif (/\G \b (q) \b /oxgc) {
             if (/\G (\#) ((?:\\\#|\\\\|$q_char)*?) (\#) /oxgc)                    { return $e . e_split_q('qr',$1,$3,$2,'');   } # q# #  --> qr # #
             else {
-                while (/\G \z/oxgc) {
+                while (not /\G \z/oxgc) {
                     if    (/\G (\s+|\#.*)                                  /oxgc) { $e .= $1; }
                     elsif (/\G (\() ((?:\\\\|\\\)|\\\(|$q_paren)*?)   (\)) /oxgc) { return $e . e_split_q('qr',$1,$3,$2,'');   } # q ( ) --> qr ( )
                     elsif (/\G (\{) ((?:\\\\|\\\}|\\\{|$q_brace)*?)   (\}) /oxgc) { return $e . e_split_q('qr',$1,$3,$2,'');   } # q { } --> qr { }
                     elsif (/\G (\[) ((?:\\\\|\\\]|\\\[|$q_bracket)*?) (\]) /oxgc) { return $e . e_split_q('qr',$1,$3,$2,'');   } # q [ ] --> qr [ ]
                     elsif (/\G (\<) ((?:\\\\|\\\>|\\\<|$q_angle)*?)   (\>) /oxgc) { return $e . e_split_q('qr',$1,$3,$2,'');   } # q < > --> qr < >
-                    elsif (/\G ([\*\-\:\?\\\^\|]) ((?:$q_char)*?)     (\1) /oxgc) { return $e . e_split_q('qr','{','}',$2,''); } # q | | --> qr { }
+                    elsif (/\G ([*\-:?\\^|])       ((?:$q_char)*?)    (\1) /oxgc) { return $e . e_split_q('qr','{','}',$2,''); } # q | | --> qr { }
                     elsif (/\G (\S) ((?:\\\\|\\\1|     $q_char)*?)    (\1) /oxgc) { return $e . e_split_q('qr',$1,$3,$2,'');   } # q * * --> qr * *
                 }
-                croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
             }
         }
 
 # split m//
         elsif (/\G \b (m) \b /oxgc) {
-            if (/\G (\#) ((?:$qq_char)*?) (\#) ([cgimosxp]*) /oxgc)                             { return $e . e_split  ('qr',$1,$3,$2,$4);   } # m# #  --> qr # #
+            if (/\G (\#) ((?:$qq_char)*?) (\#) ([cgimosxp]*) /oxgc)                        { return $e . e_split  ('qr',$1,$3,$2,$4);   } # m# #  --> qr # #
             else {
                 while (not /\G \z/oxgc) {
-                    if    (/\G (\s+|\#.*)                                                /oxgc) { $e .= $1; }
-                    elsif (/\G (\()               ((?:$qq_paren)*?)   (\)) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # m ( ) --> qr ( )
-                    elsif (/\G (\{)               ((?:$qq_brace)*?)   (\}) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # m { } --> qr { }
-                    elsif (/\G (\[)               ((?:$qq_bracket)*?) (\]) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # m [ ] --> qr [ ]
-                    elsif (/\G (\<)               ((?:$qq_angle)*?)   (\>) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # m < > --> qr < >
-                    elsif (/\G (\')               ((?:$qq_char)*?)    (\') ([cgimosxp]*) /oxgc) { return $e . e_split_q('qr',$1, $3, $2,$4); } # m ' ' --> qr ' '
-                    elsif (/\G ([\*\-\:\?\\\^\|]) ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr','{','}',$2,$4); } # m | | --> qr { }
-                    elsif (/\G (\S)               ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # m * * --> qr * *
+                    if    (/\G (\s+|\#.*)                                           /oxgc) { $e .= $1; }
+                    elsif (/\G (\()          ((?:$qq_paren)*?)   (\)) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # m ( ) --> qr ( )
+                    elsif (/\G (\{)          ((?:$qq_brace)*?)   (\}) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # m { } --> qr { }
+                    elsif (/\G (\[)          ((?:$qq_bracket)*?) (\]) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # m [ ] --> qr [ ]
+                    elsif (/\G (\<)          ((?:$qq_angle)*?)   (\>) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # m < > --> qr < >
+                    elsif (/\G (\')          ((?:$qq_char)*?)    (\') ([cgimosxp]*) /oxgc) { return $e . e_split_q('qr',$1, $3, $2,$4); } # m ' ' --> qr ' '
+                    elsif (/\G ([*\-:?\\^|]) ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr','{','}',$2,$4); } # m | | --> qr { }
+                    elsif (/\G (\S)          ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { return $e . e_split  ('qr',$1, $3, $2,$4); } # m * * --> qr * *
                 }
-                croak "$__FILE__: Search pattern not terminated";
+                die "$__FILE__: Search pattern not terminated";
             }
         }
 
@@ -838,7 +976,7 @@ sub escape {
                 elsif (/\G \'        /oxgc)                                                    { return $e . e_split_q(q{ qr},"'","'",$q_string,''); } # ' ' --> qr ' '
                 elsif (/\G ($q_char) /oxgc) { $q_string .= $1; }
             }
-            croak "$__FILE__: Can't find string terminator anywhere before EOF";
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
         }
 
 # split ""
@@ -850,7 +988,7 @@ sub escape {
                 elsif (/\G \"        /oxgc)                                                    { return $e . e_split(q{ qr},'"','"',$qq_string,''); } # " " --> qr " "
                 elsif (/\G ($q_char) /oxgc) { $qq_string .= $1; }
             }
-            croak "$__FILE__: Can't find string terminator anywhere before EOF";
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
         }
 
 # split //
@@ -862,7 +1000,7 @@ sub escape {
                 elsif (/\G \/ ([cgimosxp]*) /oxgc)                                             { return $e . e_split(q{ qr}, '/','/',$regexp,$1); } # / / --> qr / /
                 elsif (/\G ($q_char)        /oxgc) { $regexp .= $1; }
             }
-            croak "$__FILE__: Search pattern not terminated";
+            die "$__FILE__: Search pattern not terminated";
         }
     }
 
@@ -870,7 +1008,7 @@ sub escape {
 
     # about [cdsbB]* (/B modifier)
     #
-    # P.559 in appendix C
+    # P.559 appendix C
     # of ISBN 4-89052-384-7 Programming perl
     # (Japanese title is: Perl puroguramingu)
 
@@ -896,7 +1034,7 @@ sub escape {
                         elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cdsbB]*) /oxgc) { return e_tr(@tr,$e,$2,$4); } # tr ( ) < >
                         elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cdsbB]*) /oxgc) { return e_tr(@tr,$e,$2,$4); } # tr ( ) * *
                     }
-                    croak "$__FILE__: Transliteration replacement not terminated";
+                    die "$__FILE__: Transliteration replacement not terminated";
                 }
                 elsif (/\G (\{) ((?:$qq_brace)*?) (\}) /oxgc) {
                     my @tr = ($tr_variable,$2);
@@ -908,7 +1046,7 @@ sub escape {
                         elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cdsbB]*) /oxgc) { return e_tr(@tr,$e,$2,$4); } # tr { } < >
                         elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cdsbB]*) /oxgc) { return e_tr(@tr,$e,$2,$4); } # tr { } * *
                     }
-                    croak "$__FILE__: Transliteration replacement not terminated";
+                    die "$__FILE__: Transliteration replacement not terminated";
                 }
                 elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) /oxgc) {
                     my @tr = ($tr_variable,$2);
@@ -920,7 +1058,7 @@ sub escape {
                         elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cdsbB]*) /oxgc) { return e_tr(@tr,$e,$2,$4); } # tr [ ] < >
                         elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cdsbB]*) /oxgc) { return e_tr(@tr,$e,$2,$4); } # tr [ ] * *
                     }
-                    croak "$__FILE__: Transliteration replacement not terminated";
+                    die "$__FILE__: Transliteration replacement not terminated";
                 }
                 elsif (/\G (\<) ((?:$qq_angle)*?) (\>) /oxgc) {
                     my @tr = ($tr_variable,$2);
@@ -932,7 +1070,7 @@ sub escape {
                         elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cdsbB]*) /oxgc) { return e_tr(@tr,$e,$2,$4); } # tr < > < >
                         elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cdsbB]*) /oxgc) { return e_tr(@tr,$e,$2,$4); } # tr < > * *
                     }
-                    croak "$__FILE__: Transliteration replacement not terminated";
+                    die "$__FILE__: Transliteration replacement not terminated";
                 }
                 #           $1   $2               $3   $4               $5   $6
                 elsif (/\G (\S) ((?:$qq_char)*?) (\1) ((?:$qq_char)*?) (\1) ([cdsbB]*) /oxgc) { # tr * * *
@@ -940,7 +1078,7 @@ sub escape {
                     return e_tr(@tr,'',$4,$6);
                 }
             }
-            croak "$__FILE__: Transliteration pattern not terminated";
+            die "$__FILE__: Transliteration pattern not terminated";
         }
     }
 
@@ -957,7 +1095,7 @@ sub escape {
                 elsif (/\G (\#)       /oxgc) { return e_qq($ope,'#','#',$qq_string); }
                 elsif (/\G ($qq_char) /oxgc) { $qq_string .= $1;                     }
             }
-            croak "$__FILE__: Can't find string terminator anywhere before EOF";
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
         }
 
         else {
@@ -979,7 +1117,7 @@ sub escape {
                         }
                         elsif (/\G ($qq_char) /oxgc) { $qq_string .= $1;                          }
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
 
 #               elsif (/\G (\{) ((?:$qq_brace)*?) (\}) /oxgc) { return $e . e_qq($ope,$1,$3,$2); } # qq { }
@@ -996,7 +1134,7 @@ sub escape {
                         }
                         elsif (/\G ($qq_char) /oxgc) { $qq_string .= $1;                          }
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
 
 #               elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) /oxgc) { return $e . e_qq($ope,$1,$3,$2); } # qq [ ]
@@ -1013,7 +1151,7 @@ sub escape {
                         }
                         elsif (/\G ($qq_char) /oxgc) { $qq_string .= $1;                          }
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
 
 #               elsif (/\G (\<) ((?:$qq_angle)*?) (\>) /oxgc) { return $e . e_qq($ope,$1,$3,$2); } # qq < >
@@ -1030,7 +1168,7 @@ sub escape {
                         }
                         elsif (/\G ($qq_char) /oxgc) { $qq_string .= $1;                          }
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
 
 #               elsif (/\G (\S) ((?:$qq_char)*?) (\1) /oxgc) { return $e . e_qq($ope,$1,$3,$2); } # qq * *
@@ -1043,10 +1181,10 @@ sub escape {
                         elsif (/\G (\Q$delimiter\E)   /oxgc) { return $e . e_qq($ope,$delimiter,$delimiter,$qq_string); }
                         elsif (/\G ($qq_char)         /oxgc) { $qq_string .= $1;                                        }
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
             }
-            croak "$__FILE__: Can't find string terminator anywhere before EOF";
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
         }
     }
 
@@ -1059,16 +1197,16 @@ sub escape {
         else {
             my $e = '';
             while (not /\G \z/oxgc) {
-                if    (/\G (\s+|\#.*)                                              /oxgc) { $e .= $1; }
-                elsif (/\G (\()               ((?:$qq_paren)*?)   (\)) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # qr ( )
-                elsif (/\G (\{)               ((?:$qq_brace)*?)   (\}) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # qr { }
-                elsif (/\G (\[)               ((?:$qq_bracket)*?) (\]) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # qr [ ]
-                elsif (/\G (\<)               ((?:$qq_angle)*?)   (\>) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # qr < >
-                elsif (/\G (\')               ((?:$qq_char)*?)    (\') ([imosxp]*) /oxgc) { return $e . e_qr_q($ope,$1, $3, $2,$4); } # qr ' '
-                elsif (/\G ([\*\-\:\?\\\^\|]) ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,'{','}',$2,$4); } # qr | | --> qr { }
-                elsif (/\G (\S)               ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # qr * *
+                if    (/\G (\s+|\#.*)                                         /oxgc) { $e .= $1; }
+                elsif (/\G (\()          ((?:$qq_paren)*?)   (\)) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # qr ( )
+                elsif (/\G (\{)          ((?:$qq_brace)*?)   (\}) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # qr { }
+                elsif (/\G (\[)          ((?:$qq_bracket)*?) (\]) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # qr [ ]
+                elsif (/\G (\<)          ((?:$qq_angle)*?)   (\>) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # qr < >
+                elsif (/\G (\')          ((?:$qq_char)*?)    (\') ([imosxp]*) /oxgc) { return $e . e_qr_q($ope,$1, $3, $2,$4); } # qr ' '
+                elsif (/\G ([*\-:?\\^|]) ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,'{','}',$2,$4); } # qr | | --> qr { }
+                elsif (/\G (\S)          ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # qr * *
             }
-            croak "$__FILE__: Can't find string terminator anywhere before EOF";
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
         }
     }
 
@@ -1098,7 +1236,7 @@ sub escape {
                 elsif (/\G ([\x21-\x3F]) (.*?)              (\1) /oxmsgc) { return $e . e_qw($ope,$1,$3,$2); } # qw * *
                 elsif (/\G (\S)          ((?:$q_char)*?)    (\1) /oxmsgc) { return $e . e_qw($ope,$1,$3,$2); } # qw * *
             }
-            croak "$__FILE__: Can't find string terminator anywhere before EOF";
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
         }
     }
 
@@ -1119,7 +1257,7 @@ sub escape {
                 elsif (/\G (\') ((?:$qq_char)*?)    (\') /oxgc) { return $e . e_q ($ope,$1,$3,$2); } # qx ' '
                 elsif (/\G (\S) ((?:$qq_char)*?)    (\1) /oxgc) { return $e . e_qq($ope,$1,$3,$2); } # qx * *
             }
-            croak "$__FILE__: Can't find string terminator anywhere before EOF";
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
         }
     }
 
@@ -1140,7 +1278,7 @@ sub escape {
                 elsif (/\G (\#)      /oxgc) { return e_q($ope,'#','#',$q_string); }
                 elsif (/\G ($q_char) /oxgc) { $q_string .= $1;                    }
             }
-            croak "$__FILE__: Can't find string terminator anywhere before EOF";
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
         }
 
         else {
@@ -1163,7 +1301,7 @@ sub escape {
                         }
                         elsif (/\G ($q_char) /oxgc) { $q_string .= $1;                         }
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
 
 #               elsif (/\G (\{) ((?:\\\}|\\\\|$q_brace)*?) (\}) /oxgc) { return $e . e_q($ope,$1,$3,$2); } # q { }
@@ -1181,7 +1319,7 @@ sub escape {
                         }
                         elsif (/\G ($q_char) /oxgc) { $q_string .= $1;                         }
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
 
 #               elsif (/\G (\[) ((?:\\\]|\\\\|$q_bracket)*?) (\]) /oxgc) { return $e . e_q($ope,$1,$3,$2); } # q [ ]
@@ -1199,7 +1337,7 @@ sub escape {
                         }
                         elsif (/\G ($q_char) /oxgc) { $q_string .= $1;                         }
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
 
 #               elsif (/\G (\<) ((?:\\\>|\\\\|$q_angle)*?) (\>) /oxgc) { return $e . e_q($ope,$1,$3,$2); } # q < >
@@ -1217,7 +1355,7 @@ sub escape {
                         }
                         elsif (/\G ($q_char) /oxgc) { $q_string .= $1;                         }
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
 
 #               elsif (/\G (\S) ((?:\\\1|\\\\|$q_char)*?) (\1) /oxgc) { return $e . e_q($ope,$1,$3,$2); } # q * *
@@ -1230,10 +1368,10 @@ sub escape {
                         elsif (/\G (\Q$delimiter\E)   /oxgc) { return $e . e_q($ope,$delimiter,$delimiter,$q_string); }
                         elsif (/\G ($q_char)          /oxgc) { $q_string .= $1;                                       }
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
             }
-            croak "$__FILE__: Can't find string terminator anywhere before EOF";
+            die "$__FILE__: Can't find string terminator anywhere before EOF";
         }
     }
 
@@ -1241,21 +1379,21 @@ sub escape {
     elsif (/\G \b (m) \b /oxgc) {
         my $ope = $1;
         if (/\G (\#) ((?:$qq_char)*?) (\#) ([cgimosxp]*) /oxgc) { # m# #
-            return e_m($ope,$1,$3,$2,$4);
+            return e_qr($ope,$1,$3,$2,$4);
         }
         else {
             my $e = '';
             while (not /\G \z/oxgc) {
-                if    (/\G (\s+|\#.*)                                                /oxgc) { $e .= $1; }
-                elsif (/\G (\()               ((?:$qq_paren)*?)   (\)) ([cgimosxp]*) /oxgc) { return $e . e_m  ($ope,$1, $3, $2,$4); } # m ( )
-                elsif (/\G (\{)               ((?:$qq_brace)*?)   (\}) ([cgimosxp]*) /oxgc) { return $e . e_m  ($ope,$1, $3, $2,$4); } # m { }
-                elsif (/\G (\[)               ((?:$qq_bracket)*?) (\]) ([cgimosxp]*) /oxgc) { return $e . e_m  ($ope,$1, $3, $2,$4); } # m [ ]
-                elsif (/\G (\<)               ((?:$qq_angle)*?)   (\>) ([cgimosxp]*) /oxgc) { return $e . e_m  ($ope,$1, $3, $2,$4); } # m < >
-                elsif (/\G (\')               ((?:$qq_char)*?)    (\') ([cgimosxp]*) /oxgc) { return $e . e_m_q($ope,$1, $3, $2,$4); } # m ' '
-                elsif (/\G ([\*\-\:\?\\\^\|]) ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { return $e . e_m  ($ope,'{','}',$2,$4); } # m | | --> m { }
-                elsif (/\G (\S)               ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { return $e . e_m  ($ope,$1, $3, $2,$4); } # m * *
+                if    (/\G (\s+|\#.*)                                           /oxgc) { $e .= $1; }
+                elsif (/\G (\()          ((?:$qq_paren)*?)   (\)) ([cgimosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # m ( )
+                elsif (/\G (\{)          ((?:$qq_brace)*?)   (\}) ([cgimosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # m { }
+                elsif (/\G (\[)          ((?:$qq_bracket)*?) (\]) ([cgimosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # m [ ]
+                elsif (/\G (\<)          ((?:$qq_angle)*?)   (\>) ([cgimosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # m < >
+                elsif (/\G (\')          ((?:$qq_char)*?)    (\') ([cgimosxp]*) /oxgc) { return $e . e_qr_q($ope,$1, $3, $2,$4); } # m ' '
+                elsif (/\G ([*\-:?\\^|]) ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { return $e . e_qr  ($ope,'{','}',$2,$4); } # m | | --> m { }
+                elsif (/\G (\S)          ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { return $e . e_qr  ($ope,$1, $3, $2,$4); } # m * *
             }
-            croak "$__FILE__: Search pattern not terminated";
+            die "$__FILE__: Search pattern not terminated";
         }
     }
 
@@ -1263,7 +1401,7 @@ sub escape {
 
     # about [cegimosxp]* (/cg modifier)
     #
-    # P.67 in Pattern-Matching Operators
+    # P.67 Pattern-Matching Operators
     # of ISBN 0-596-00241-6 Perl in a Nutshell, Second Edition.
 
     elsif (/\G \b (s) \b /oxgc) {
@@ -1271,141 +1409,152 @@ sub escape {
 
         #        $1   $2               $3   $4               $5   $6
         if (/\G (\#) ((?:$qq_char)*?) (\#) ((?:$qq_char)*?) (\#) ([cegimosxp]*) /oxgc) { # s# # #
-            my @s = ($ope,$1,$3,$2);
-            return e_s1(@s,$6) . e_s2('',$5,$4,$6);
+            return e_sub($sub_variable,$1,$2,$3,$3,$4,$5,$6);
         }
         else {
             my $e = '';
             while (not /\G \z/oxgc) {
                 if (/\G (\s+|\#.*) /oxgc) { $e .= $1; }
                 elsif (/\G (\() ((?:$qq_paren)*?) (\)) /oxgc) {
-                    my @s = ($ope,$1,$3,$2);
+                    my @s = ($1,$2,$3);
                     while (not /\G \z/oxgc) {
                         if    (/\G (\s+|\#.*)                                   /oxgc) { $e .= $1; }
                         #           $1   $2                  $3   $4
-                        elsif (/\G (\() ((?:$qq_paren)*?)   (\)) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s ( ) ( )
-                        elsif (/\G (\{) ((?:$qq_brace)*?)   (\}) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s ( ) { } --> s ( ) < >
-                        elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s ( ) [ ] --> s ( ) < >
-                        elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s ( ) < >
-                        elsif (/\G (\') ((?:$qq_char)*?)    (\') ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2_q  ('"','"',$2,$4);} # s ( ) ' ' --> s ( ) " "
-                        elsif (/\G (\$) ((?:$qq_char)*?)    (\$) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2_dol('"','"',$2,$4);} # s ( ) $ $ --> s ( ) " "
-                        elsif (/\G (\:) ((?:$qq_char)*?)    (\:) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s ( ) : : --> s ( ) < >
-                        elsif (/\G (\@) ((?:$qq_char)*?)    (\@) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s ( ) @ @ --> s ( ) < >
-                        elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s ( ) * *
+                        elsif (/\G (\() ((?:$qq_paren)*?)   (\)) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\{) ((?:$qq_brace)*?)   (\}) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\') ((?:$qq_char)*?)    (\') ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\$) ((?:$qq_char)*?)    (\$) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\:) ((?:$qq_char)*?)    (\:) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\@) ((?:$qq_char)*?)    (\@) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
                     }
-                    croak "$__FILE__: Substitution replacement not terminated";
+                    die "$__FILE__: Substitution replacement not terminated";
                 }
                 elsif (/\G (\{) ((?:$qq_brace)*?) (\}) /oxgc) {
-                    my @s = ($ope,$1,$3,$2);
+                    my @s = ($1,$2,$3);
                     while (not /\G \z/oxgc) {
                         if    (/\G (\s+|\#.*)                                   /oxgc) { $e .= $1; }
                         #           $1   $2                  $3   $4
-                        elsif (/\G (\() ((?:$qq_paren)*?)   (\)) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s { } ( )
-                        elsif (/\G (\{) ((?:$qq_brace)*?)   (\}) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s { } { } --> s { } < >
-                        elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s { } [ ] --> s { } < >
-                        elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s { } < >
-                        elsif (/\G (\') ((?:$qq_char)*?)    (\') ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2_q  ('"','"',$2,$4);} # s { } ' ' --> s { } " "
-                        elsif (/\G (\$) ((?:$qq_char)*?)    (\$) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2_dol('"','"',$2,$4);} # s { } $ $ --> s { } " "
-                        elsif (/\G (\:) ((?:$qq_char)*?)    (\:) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s { } : : --> s { } < >
-                        elsif (/\G (\@) ((?:$qq_char)*?)    (\@) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s { } @ @ --> s { } < >
-                        elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s { } * *
+                        elsif (/\G (\() ((?:$qq_paren)*?)   (\)) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\{) ((?:$qq_brace)*?)   (\}) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\') ((?:$qq_char)*?)    (\') ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\$) ((?:$qq_char)*?)    (\$) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\:) ((?:$qq_char)*?)    (\:) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\@) ((?:$qq_char)*?)    (\@) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
                     }
-                    croak "$__FILE__: Substitution replacement not terminated";
+                    die "$__FILE__: Substitution replacement not terminated";
                 }
                 elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) /oxgc) {
-                    my @s = ($ope,$1,$3,$2);
+                    my @s = ($1,$2,$3);
                     while (not /\G \z/oxgc) {
                         if    (/\G (\s+|\#.*)                                   /oxgc) { $e .= $1; }
                         #           $1   $2                  $3   $4
-                        elsif (/\G (\() ((?:$qq_paren)*?)   (\)) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s [ ] ( )
-                        elsif (/\G (\{) ((?:$qq_brace)*?)   (\}) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s [ ] { }
-                        elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s [ ] [ ]
-                        elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s [ ] < >
-                        elsif (/\G (\') ((?:$qq_char)*?)    (\') ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2_q  ('"','"',$2,$4);} # s [ ] ' ' --> s [ ] " "
-                        elsif (/\G (\$) ((?:$qq_char)*?)    (\$) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2_dol('"','"',$2,$4);} # s [ ] $ $ --> s [ ] " "
-                        elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s [ ] * *
+                        elsif (/\G (\() ((?:$qq_paren)*?)   (\)) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\{) ((?:$qq_brace)*?)   (\}) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\') ((?:$qq_char)*?)    (\') ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\$) ((?:$qq_char)*?)    (\$) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
                     }
-                    croak "$__FILE__: Substitution replacement not terminated";
+                    die "$__FILE__: Substitution replacement not terminated";
                 }
                 elsif (/\G (\<) ((?:$qq_angle)*?) (\>) /oxgc) {
-                    my @s = ($ope,$1,$3,$2);
+                    my @s = ($1,$2,$3);
                     while (not /\G \z/oxgc) {
                         if    (/\G (\s+|\#.*)                                   /oxgc) { $e .= $1; }
                         #           $1   $2                  $3   $4
-                        elsif (/\G (\() ((?:$qq_paren)*?)   (\)) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s < > ( )
-                        elsif (/\G (\{) ((?:$qq_brace)*?)   (\}) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s < > { } --> s < > < >
-                        elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s < > [ ] --> s < > < >
-                        elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s < > < >
-                        elsif (/\G (\') ((?:$qq_char)*?)    (\') ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2_q  ('"','"',$2,$4);} # s < > ' ' --> s < > " "
-                        elsif (/\G (\$) ((?:$qq_char)*?)    (\$) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2_dol('"','"',$2,$4);} # s < > $ $ --> s < > " "
-                        elsif (/\G (\:) ((?:$qq_char)*?)    (\:) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s < > : : --> s < > < >
-                        elsif (/\G (\@) ((?:$qq_char)*?)    (\@) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ('<','>',$2,$4);} # s < > @ @ --> s < > < >
-                        elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cegimosxp]*) /oxgc) { return e_s1(@s,$4) . $e . e_s2    ($1,$3,$2,$4);  } # s < > * *
+                        elsif (/\G (\() ((?:$qq_paren)*?)   (\)) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\{) ((?:$qq_brace)*?)   (\}) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\[) ((?:$qq_bracket)*?) (\]) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\<) ((?:$qq_angle)*?)   (\>) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\') ((?:$qq_char)*?)    (\') ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\$) ((?:$qq_char)*?)    (\$) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\:) ((?:$qq_char)*?)    (\:) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\@) ((?:$qq_char)*?)    (\@) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
+                        elsif (/\G (\S) ((?:$qq_char)*?)    (\1) ([cegimosxp]*) /oxgc) { return e_sub($sub_variable,@s,$1,$2,$3,$4); }
                     }
-                    croak "$__FILE__: Substitution replacement not terminated";
+                    die "$__FILE__: Substitution replacement not terminated";
                 }
                 #           $1   $2               $3   $4               $5   $6
-                elsif (/\G (\') ((?:$qq_char)*?) (\') ((?:$qq_char)*?) (\') ([cegimosxp]*) /oxgc) { # s ' ' ' --> s " " "
-                    my @s = ($ope,'"','"',$2);
-                    return $e . e_s1_q(@s,$6) . e_s2_q('','"',$4,$6);
+                elsif (/\G (\') ((?:$qq_char)*?) (\') ((?:$qq_char)*?) (\') ([cegimosxp]*) /oxgc) {
+                    return e_sub($sub_variable,$1,$2,$3,$3,$4,$5,$6);
                 }
-                #           $1                 $2               $3   $4               $5   $6
-                elsif (/\G ([\*\-\:\?\\\^\|]) ((?:$qq_char)*?) (\1) ((?:$qq_char)*?) (\1) ([cegimosxp]*) /oxgc) { # s | | | --> s { } { }
-                    my @s = ($ope,'{','}',$2);
-                    return $e . e_s1(@s,$6) . e_s2('{','}',$4,$6);
+                #           $1            $2               $3   $4               $5   $6
+                elsif (/\G ([*\-:?\\^|]) ((?:$qq_char)*?) (\1) ((?:$qq_char)*?) (\1) ([cegimosxp]*) /oxgc) {
+                    return e_sub($sub_variable,'{',$2,'}','{',$4,'}',$6); # s | | | --> s { } { }
                 }
                 #           $1   $2               $3   $4               $5   $6
-                elsif (/\G (\$) ((?:$qq_char)*?) (\1) ((?:$qq_char)*?) (\1) ([cegimosxp]*) /oxgc) { # s $ $ $ --> s " " "
-                    my @s = ($ope,'"','"',$2);
-                    return $e . e_s1_dol(@s,$6) . e_s2_dol('','"',$4,$6);
+                elsif (/\G (\$) ((?:$qq_char)*?) (\1) ((?:$qq_char)*?) (\1) ([cegimosxp]*) /oxgc) {
+                    return e_sub($sub_variable,$1,$2,$3,$3,$4,$5,$6);
                 }
                 #           $1   $2               $3   $4               $5   $6
-                elsif (/\G (\S) ((?:$qq_char)*?) (\1) ((?:$qq_char)*?) (\1) ([cegimosxp]*) /oxgc) { # s * * *
-                    my @s = ($ope,$1,$3,$2);
-                    return $e . e_s1(@s,$6) . e_s2('',$5,$4,$6);
+                elsif (/\G (\S) ((?:$qq_char)*?) (\1) ((?:$qq_char)*?) (\1) ([cegimosxp]*) /oxgc) {
+                    return e_sub($sub_variable,$1,$2,$3,$3,$4,$5,$6);
                 }
             }
-            croak "$__FILE__: Substitution pattern not terminated";
+            die "$__FILE__: Substitution pattern not terminated";
         }
     }
 
 # do
-    elsif (/\G \b do (?= \s* \{ )                    /oxmsgc) { return 'do';        }
-    elsif (/\G \b do (?= \s+ (?: q|qq|qx) \b)        /oxmsgc) { return 'Egbk::do'; }
-    elsif (/\G \b do (?= \s+ \w+)                    /oxmsgc) { return 'do';        }
-    elsif (/\G \b do (?= \s* \$ \w+ (?: ::\w+)* \( ) /oxmsgc) { return 'do';        }
-    elsif (/\G \b do \b                              /oxmsgc) { return 'Egbk::do'; }
+    elsif (/\G \b do (?= \s* \{ )                    /oxmsgc)                                  { return 'do';                }
+    elsif (/\G \b do (?= \s+ (?: q|qq|qx) \b)        /oxmsgc)                                  { return 'Egbk::do';         }
+    elsif (/\G \b do (?= \s+ \w+)                    /oxmsgc)                                  { return 'do';                }
+    elsif (/\G \b do (?= \s* \$ \w+ (?: ::\w+)* \( ) /oxmsgc)                                  { return 'do';                }
+    elsif (/\G \b do \b                              /oxmsgc)                                  { return 'Egbk::do';         }
 
 # require ignore module
-    elsif (/\G \b require \s+ ($ignore_modules) \b              /oxmsgc) { return "# require $1";    }
-
-# require standard module
-    elsif (/\G \b require \s+ ($standard_modules) \b            /oxmsgc) { return "require $1";      }
+    elsif (/\G \b require (\s+ (?:$ignore_modules) .*? ;) ([ \t]* [#\n]) /oxmsgc)              { return "# require$1$2";     }
+    elsif (/\G \b require (\s+ (?:$ignore_modules) .*? ;) ([ \t]* [^#])  /oxmsgc)              { return "# require$1\n$2";   }
+    elsif (/\G \b require (\s+ (?:$ignore_modules)) \b                   /oxmsgc)              { return "# require$1";       }
 
 # require
-    elsif (/\G \b require \s+ (v? [0-9]+(?: [._][0-9]+)*) \s* ; /oxmsgc) { return "require $1;";     }
-    elsif (/\G \b require \s+ (\w+(?: ::\w+)*)            \s* ; /oxmsgc) { return e_require($1);     }
-    elsif (/\G \b require                                 \s* ; /oxmsgc) { return 'Egbk::require;'; }
-    elsif (/\G \b require \b                                    /oxmsgc) { return 'Egbk::require';  }
+    elsif (/\G \b require \s+ (v? [0-9]+(?: [._][0-9]+)*) \s* ; /oxmsgc)                       { return "require $1;";       }
+    elsif (/\G \b require \s+ (\w+(?: ::\w+)*)            \s* ; /oxmsgc)                       { return e_require($1);       }
+    elsif (/\G \b require                                 \s* ; /oxmsgc)                       { return 'Egbk::require;';   }
+    elsif (/\G \b require \b                                    /oxmsgc)                       { return 'Egbk::require';    }
 
-# use ignore module
-    elsif (/\G \b use \s+ ($ignore_modules) \b                                        /oxmsgc) { return "# use $1";         }
-
-# use standard module
-    elsif (/\G \b use \s+ ($standard_modules) \b                                      /oxmsgc) { return "use $1";           }
+# ignore use module
+    elsif (/\G \b use (\s+ (?:$ignore_modules) .*? ;) ([ \t]* [#\n]) /oxmsgc)                  { return "# use$1$2";         }
+    elsif (/\G \b use (\s+ (?:$ignore_modules) .*? ;) ([ \t]* [^#])  /oxmsgc)                  { return "# use$1\n$2";       }
+    elsif (/\G \b use (\s+ (?:$ignore_modules)) \b                   /oxmsgc)                  { return "# use$1";           }
 
 # use without import
-    elsif (/\G \b use \s+ (v? [0-9]+(?: [._][0-9]+)*)                           \s* ; /oxmsgc) { return "use $1;";          }
-    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s*        (\()          \s* \) \s* ; /oxmsgc) { return e_use_noimport($1); }
-    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\()          \s* \) \s* ; /oxmsgc) { return e_use_noimport($1); }
-    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\{)          \s* \} \s* ; /oxmsgc) { return e_use_noimport($1); }
-    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\[)          \s* \] \s* ; /oxmsgc) { return e_use_noimport($1); }
-    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\<)          \s* \> \s* ; /oxmsgc) { return e_use_noimport($1); }
-    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* ([\x21-\x3F]) \s* \2 \s* ; /oxmsgc) { return e_use_noimport($1); }
-    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\S)          \s* \2 \s* ; /oxmsgc) { return e_use_noimport($1); }
+    elsif (/\G \b use \s+ (v? [0-9]+(?: [._][0-9]+)*)                           \s* ; /oxmsgc) { return "use $1;";           }
+    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s*        (\()          \s* \) \s* ; /oxmsgc) { return e_use_noimport($1);  }
+    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\()          \s* \) \s* ; /oxmsgc) { return e_use_noimport($1);  }
+    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\{)          \s* \} \s* ; /oxmsgc) { return e_use_noimport($1);  }
+    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\[)          \s* \] \s* ; /oxmsgc) { return e_use_noimport($1);  }
+    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\<)          \s* \> \s* ; /oxmsgc) { return e_use_noimport($1);  }
+    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* ([\x21-\x3F]) \s* \2 \s* ; /oxmsgc) { return e_use_noimport($1);  }
+    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\S)          \s* \2 \s* ; /oxmsgc) { return e_use_noimport($1);  }
+
+# ignore no module
+    elsif (/\G \b no  (\s+ (?:$ignore_modules) .*? ;) ([ \t]* [#\n]) /oxmsgc)                  { return "# no$1$2";          }
+    elsif (/\G \b no  (\s+ (?:$ignore_modules) .*? ;) ([ \t]* [^#])  /oxmsgc)                  { return "# no$1\n$2";        }
+    elsif (/\G \b no  (\s+ (?:$ignore_modules)) \b                   /oxmsgc)                  { return "# no$1";            }
+
+# no without unimport
+    elsif (/\G \b no  \s+ (v? [0-9]+(?: [._][0-9]+)*)                           \s* ; /oxmsgc) { return "no $1;";            }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s*        (\()          \s* \) \s* ; /oxmsgc) { return e_no_nounimport($1); }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\()          \s* \) \s* ; /oxmsgc) { return e_no_nounimport($1); }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\{)          \s* \} \s* ; /oxmsgc) { return e_no_nounimport($1); }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\[)          \s* \] \s* ; /oxmsgc) { return e_no_nounimport($1); }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\<)          \s* \> \s* ; /oxmsgc) { return e_no_nounimport($1); }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* ([\x21-\x3F]) \s* \2 \s* ; /oxmsgc) { return e_no_nounimport($1); }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ qw \s* (\S)          \s* \2 \s* ; /oxmsgc) { return e_no_nounimport($1); }
 
 # use with import no parameter
-    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*)                                 \s* ; /oxmsgc) { return e_use_noparam($1);  }
+    elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*)                                 \s* ; /oxmsgc) { return e_use_noparam($1);   }
+
+# no with unimport no parameter
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*)                                 \s* ; /oxmsgc) { return e_no_noparam($1);    }
 
 # use with import parameters
     elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s* (                (\()          [^)]*         \)) \s* ; /oxmsgc) { return e_use($1,$2); }
@@ -1418,6 +1567,17 @@ sub escape {
     elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ ((?:q|qq|qw) \s* ([\x21-\x3F]) .*?           \3) \s* ; /oxmsgc) { return e_use($1,$2); }
     elsif (/\G \b use \s+ ([A-Z]\w*(?: ::\w+)*) \s+ ((?:q|qq|qw) \s* (\S)          (?:$q_char)*? \3) \s* ; /oxmsgc) { return e_use($1,$2); }
 
+# no with unimport parameters
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s* (                (\()          [^)]*         \)) \s* ; /oxmsgc) { return e_no($1,$2);  }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s* (                (\')          [^']*         \') \s* ; /oxmsgc) { return e_no($1,$2);  }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s* (                (\")          [^"]*         \") \s* ; /oxmsgc) { return e_no($1,$2);  }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ ((?:q|qq|qw) \s* (\()          [^)]*         \)) \s* ; /oxmsgc) { return e_no($1,$2);  }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ ((?:q|qq|qw) \s* (\{)          (?:$q_char)*? \}) \s* ; /oxmsgc) { return e_no($1,$2);  }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ ((?:q|qq|qw) \s* (\[)          (?:$q_char)*? \]) \s* ; /oxmsgc) { return e_no($1,$2);  }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ ((?:q|qq|qw) \s* (\<)          [^>]*         \>) \s* ; /oxmsgc) { return e_no($1,$2);  }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ ((?:q|qq|qw) \s* ([\x21-\x3F]) .*?           \3) \s* ; /oxmsgc) { return e_no($1,$2);  }
+    elsif (/\G \b no  \s+ ([A-Z]\w*(?: ::\w+)*) \s+ ((?:q|qq|qw) \s* (\S)          (?:$q_char)*? \3) \s* ; /oxmsgc) { return e_no($1,$2);  }
+
 # ''
     elsif (/\G (?<![\w\$\@\%\&\*]) (\') /oxgc) {
         my $q_string = '';
@@ -1427,7 +1587,7 @@ sub escape {
             elsif (/\G \'        /oxgc)            { return e_q('', "'","'",$q_string); }
             elsif (/\G ($q_char) /oxgc)            { $q_string .= $1;                   }
         }
-        croak "$__FILE__: Can't find string terminator anywhere before EOF";
+        die "$__FILE__: Can't find string terminator anywhere before EOF";
     }
 
 # ""
@@ -1439,7 +1599,7 @@ sub escape {
             elsif (/\G \"        /oxgc)            { return e_qq('', '"','"',$qq_string); }
             elsif (/\G ($q_char) /oxgc)            { $qq_string .= $1;                    }
         }
-        croak "$__FILE__: Can't find string terminator anywhere before EOF";
+        die "$__FILE__: Can't find string terminator anywhere before EOF";
     }
 
 # ``
@@ -1451,7 +1611,7 @@ sub escape {
             elsif (/\G \`        /oxgc)            { return e_qq('', '`','`',$qx_string); }
             elsif (/\G ($q_char) /oxgc)            { $qx_string .= $1;                    }
         }
-        croak "$__FILE__: Can't find string terminator anywhere before EOF";
+        die "$__FILE__: Can't find string terminator anywhere before EOF";
     }
 
 # //   --- not divide operator (num / num), not defined-or
@@ -1460,10 +1620,10 @@ sub escape {
         while (not /\G \z/oxgc) {
             if    (/\G (\\\\)           /oxgc)     { $regexp .= $1;                       }
             elsif (/\G (\\\/)           /oxgc)     { $regexp .= $1;                       }
-            elsif (/\G \/ ([cgimosxp]*) /oxgc)     { return e_m ('', '/','/',$regexp,$1); }
+            elsif (/\G \/ ([cgimosxp]*) /oxgc)     { return e_qr('', '/','/',$regexp,$1); }
             elsif (/\G ($q_char)        /oxgc)     { $regexp .= $1;                       }
         }
-        croak "$__FILE__: Search pattern not terminated";
+        die "$__FILE__: Search pattern not terminated";
     }
 
 # ??   --- not conditional operator (condition ? then : else)
@@ -1472,10 +1632,10 @@ sub escape {
         while (not /\G \z/oxgc) {
             if    (/\G (\\\\)           /oxgc)     { $regexp .= $1;                       }
             elsif (/\G (\\\?)           /oxgc)     { $regexp .= $1;                       }
-            elsif (/\G \? ([cgimosxp]*) /oxgc)     { return e_m ('', '?','?',$regexp,$1); }
+            elsif (/\G \? ([cgimosxp]*) /oxgc)     { return e_qr('', '?','?',$regexp,$1); }
             elsif (/\G ($q_char)        /oxgc)     { $regexp .= $1;                       }
         }
-        croak "$__FILE__: Search pattern not terminated";
+        die "$__FILE__: Search pattern not terminated";
     }
 
 # << (bit shift)   --- not here document
@@ -1488,20 +1648,23 @@ sub escape {
         my $delimiter  = $2;
 
         # get here document
-        my $script = CORE::substr $_, pos $_;
-        $script =~ s/.*?\n//oxm;
-        if ($script =~ /\A (.*? \n $delimiter \n) /xms) {
-            $heredoc{$delimiter} = $1;
+        if ($here_script eq '') {
+            $here_script = CORE::substr $_, pos $_;
+            $here_script =~ s/.*?\n//oxm;
+        }
+        if ($here_script =~ s/\A (.*?) \n $delimiter \n //xms) {
+            push @heredoc, $1 . qq{\n$delimiter\n};
+            push @heredoc_delimiter, $delimiter;
         }
         else {
-            croak "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
+            die "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
         }
         return $here_quote;
     }
 
 # <<\HEREDOC
 
-    # P.66 "Here" Documents
+    # P.66 2.6.6. "Here" Documents
     # in Chapter 2: Bits and Pieces
     # of ISBN 0-596-00027-8 Programming Perl Third Edition.
 
@@ -1511,13 +1674,16 @@ sub escape {
         my $delimiter  = $2;
 
         # get here document
-        my $script = CORE::substr $_, pos $_;
-        $script =~ s/.*?\n//oxm;
-        if ($script =~ /\A (.*? \n $delimiter \n) /xms) {
-            $heredoc{$delimiter} = $1;
+        if ($here_script eq '') {
+            $here_script = CORE::substr $_, pos $_;
+            $here_script =~ s/.*?\n//oxm;
+        }
+        if ($here_script =~ s/\A (.*?) \n $delimiter \n //xms) {
+            push @heredoc, $1 . qq{\n$delimiter\n};
+            push @heredoc_delimiter, $delimiter;
         }
         else {
-            croak "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
+            die "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
         }
         return $here_quote;
     }
@@ -1527,16 +1693,18 @@ sub escape {
         $slash = 'm//';
         my $here_quote = $1;
         my $delimiter  = $2;
-        $heredoc_qq++;
 
         # get here document
-        my $script = CORE::substr $_, pos $_;
-        $script =~ s/.*?\n//oxm;
-        if ($script =~ /\A (.*? \n $delimiter \n) /xms) {
-            $heredoc{$delimiter} = $1;
+        if ($here_script eq '') {
+            $here_script = CORE::substr $_, pos $_;
+            $here_script =~ s/.*?\n//oxm;
+        }
+        if ($here_script =~ s/\A (.*?) \n $delimiter \n //xms) {
+            push @heredoc, e_heredoc($1) . qq{\n$delimiter\n};
+            push @heredoc_delimiter, $delimiter;
         }
         else {
-            croak "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
+            die "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
         }
         return $here_quote;
     }
@@ -1546,16 +1714,18 @@ sub escape {
         $slash = 'm//';
         my $here_quote = $1;
         my $delimiter  = $2;
-        $heredoc_qq++;
 
         # get here document
-        my $script = CORE::substr $_, pos $_;
-        $script =~ s/.*?\n//oxm;
-        if ($script =~ /\A (.*? \n $delimiter \n) /xms) {
-            $heredoc{$delimiter} = $1;
+        if ($here_script eq '') {
+            $here_script = CORE::substr $_, pos $_;
+            $here_script =~ s/.*?\n//oxm;
+        }
+        if ($here_script =~ s/\A (.*?) \n $delimiter \n //xms) {
+            push @heredoc, e_heredoc($1) . qq{\n$delimiter\n};
+            push @heredoc_delimiter, $delimiter;
         }
         else {
-            croak "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
+            die "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
         }
         return $here_quote;
     }
@@ -1565,16 +1735,18 @@ sub escape {
         $slash = 'm//';
         my $here_quote = $1;
         my $delimiter  = $2;
-        $heredoc_qq++;
 
         # get here document
-        my $script = CORE::substr $_, pos $_;
-        $script =~ s/.*?\n//oxm;
-        if ($script =~ /\A (.*? \n $delimiter \n) /xms) {
-            $heredoc{$delimiter} = $1;
+        if ($here_script eq '') {
+            $here_script = CORE::substr $_, pos $_;
+            $here_script =~ s/.*?\n//oxm;
+        }
+        if ($here_script =~ s/\A (.*?) \n $delimiter \n //xms) {
+            push @heredoc, e_heredoc($1) . qq{\n$delimiter\n};
+            push @heredoc_delimiter, $delimiter;
         }
         else {
-            croak "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
+            die "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
         }
         return $here_quote;
     }
@@ -1605,7 +1777,7 @@ sub escape {
 
 # \cD Control-D
 
-    # P.68 Other Literal Tokens
+    # P.68 2.6.8. Other Literal Tokens
     # in Chapter 2: Bits and Pieces
     # of ISBN 0-596-00027-8 Programming Perl Third Edition.
 
@@ -1622,12 +1794,28 @@ sub escape {
             ) /oxgc) { $slash = 'div'; return $1; }
 
     # any operator before m//
+
+    # //, //= (defined-or)
+    #
+    # P.164 Logical Operators
+    # in Chapter 10: More Control Structures
+    # of ISBN 978-0-596-52010-6 Learning Perl, Fifth Edition
+    # (and so on)
+
+    # ~~
+    #
+    # P.221 The Smart Match Operator
+    # in Chapter 15: Smart Matching and given-when
+    # of ISBN 978-0-596-52010-6 Learning Perl, Fifth Edition
+    # (and so on)
+
     elsif (/\G (
 
             !~~ | !~ | != | ! |
             %= | % |
             &&= | && | &= | & |
             -= | -> | - |
+            :\s*= |
             : |
             <<= | <=> | <= | < |
             == | => | =~ | = |
@@ -1655,7 +1843,7 @@ sub escape {
 
     # system error
     else {
-        croak "$__FILE__: oops, this shouldn't happen!";
+        die "$__FILE__: oops, this shouldn't happen!";
     }
 }
 
@@ -1670,7 +1858,7 @@ sub e_string {
     # of ISBN 1-56592-224-7 CJKV Information Processing
     # (and so on)
 
-    my @char = $string =~ m/ \G (\\?(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])) /oxmsg;
+    my @char = $string =~ m/ \G (\\?(?:$q_char)) /oxmsg;
 
     # without { ... }
     if (not (grep(m/\A \{ \z/xms, @char) and grep(m/\A \} \z/xms, @char))) {
@@ -1688,8 +1876,64 @@ E_STRING_LOOP:
             $slash = 'div';
         }
 
+# $0 --> $0
+        elsif ($string =~ /\G ( \$ 0 ) /oxmsgc) {
+            $e_string .= $1;
+            $slash = 'div';
+        }
+        elsif ($string =~ /\G ( \$ \{ \s* 0 \s* \} ) /oxmsgc) {
+            $e_string .= $1;
+            $slash = 'div';
+        }
+
+# $$ --> $$
+        elsif ($string =~ /\G ( \$ \$ ) (?![\w\{]) /oxmsgc) {
+            $e_string .= $1;
+            $slash = 'div';
+        }
+
+# $1, $2, $3 --> $2, $3, $4 (only when multibyte anchoring is enable)
+        elsif ($string =~ /\G \$ ([1-9][0-9]*) /oxmsgc) {
+            $e_string .= e_capture($1);
+            $slash = 'div';
+        }
+        elsif ($string =~ /\G \$ \{ \s* ([1-9][0-9]*) \s* \} /oxmsgc) {
+            $e_string .= e_capture($1);
+            $slash = 'div';
+        }
+
+# $$foo[ ... ] --> $ $foo->[ ... ]
+        elsif ($string =~ /\G \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \[ .+? \] ) /oxmsgc) {
+            $e_string .= e_capture($1.'->'.$2);
+            $slash = 'div';
+        }
+
+# $$foo{ ... } --> $ $foo->{ ... }
+        elsif ($string =~ /\G \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \{ .+? \} ) /oxmsgc) {
+            $e_string .= e_capture($1.'->'.$2);
+            $slash = 'div';
+        }
+
+# $$foo
+        elsif ($string =~ /\G \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) /oxmsgc) {
+            $e_string .= e_capture($1);
+            $slash = 'div';
+        }
+
+# ${ foo }
+        elsif ($string =~ /\G \$ \s* \{ ( \s* [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* \s* ) \} /oxmsgc) {
+            $e_string .= '${' . $1 . '}';
+            $slash = 'div';
+        }
+
+# ${ ... }
+        elsif ($string =~ /\G \$ \s* \{ \s* ( $qq_brace ) \s* \} /oxmsgc) {
+            $e_string .= e_capture($1);
+            $slash = 'div';
+        }
+
 # variable or function
-        #                             $ @ % & *     $#
+        #                             $ @ % & *     $ #
         elsif ($string =~ /\G ( (?: [\$\@\%\&\*] | \$\# | -> | \b sub \b) \s* (?: split|chop|index|rindex|lc|uc|chr|ord|reverse|tr|y|q|qq|qx|qw|m|s|qr|glob|lstat|opendir|stat|unlink|chdir) ) \b /oxmsgc) {
             $e_string .= $1;
             $slash = 'div';
@@ -1702,53 +1946,196 @@ E_STRING_LOOP:
         }
 
 # functions of package Egbk
-        elsif ($string =~ m{\G \b (CORE::(?:split|chop|index|rindex|lc|uc|chr|ord|reverse)) \b }oxgc) { $e_string .= $1;     $slash = 'm//'; }
-        elsif ($string =~ m{\G \b chop \b                                    }oxgc) { $e_string .=   'Egbk::chop';          $slash = 'm//'; }
-        elsif ($string =~ m{\G \b index \b                                   }oxgc) { $e_string .=   'Egbk::index';         $slash = 'm//'; }
-        elsif ($string =~ m{\G \b rindex \b                                  }oxgc) { $e_string .=   'Egbk::rindex';        $slash = 'm//'; }
-        elsif ($string =~ m{\G \b lc    (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .=   'Egbk::lc';            $slash = 'm//'; }
-        elsif ($string =~ m{\G \b uc    (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .=   'Egbk::uc';            $slash = 'm//'; }
+        elsif ($string =~ m{\G \b (CORE::(?:split|chop|index|rindex|lc|uc|chr|ord|reverse|open|binmode)) \b }oxgc) { $e_string .= $1; $slash = 'm//'; }
+        elsif ($string =~ m{\G \b bytes::substr \b                             }oxgc) { $e_string .= 'substr';         $slash = 'm//'; }
+        elsif ($string =~ m{\G \b chop \b                                      }oxgc) { $e_string .= 'Egbk::chop';    $slash = 'm//'; }
+        elsif ($string =~ m{\G \b bytes::index \b                              }oxgc) { $e_string .= 'index';          $slash = 'm//'; }
+        elsif ($string =~ m{\G \b GBK::index \b                               }oxgc) { $e_string .= 'GBK::index';    $slash = 'm//'; }
+        elsif ($string =~ m{\G \b index \b                                     }oxgc) { $e_string .= 'Egbk::index';   $slash = 'm//'; }
+        elsif ($string =~ m{\G \b bytes::rindex \b                             }oxgc) { $e_string .= 'rindex';         $slash = 'm//'; }
+        elsif ($string =~ m{\G \b GBK::rindex \b                              }oxgc) { $e_string .= 'GBK::rindex';   $slash = 'm//'; }
+        elsif ($string =~ m{\G \b rindex \b                                    }oxgc) { $e_string .= 'Egbk::rindex';  $slash = 'm//'; }
+        elsif ($string =~ m{\G \b lc      (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'Egbk::lc';      $slash = 'm//'; }
+        elsif ($string =~ m{\G \b lcfirst (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'Egbk::lcfirst'; $slash = 'm//'; }
+        elsif ($string =~ m{\G \b uc      (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'Egbk::uc';      $slash = 'm//'; }
+        elsif ($string =~ m{\G \b ucfirst (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'Egbk::ucfirst'; $slash = 'm//'; }
 
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+    \s* (\") ((?:$qq_char)+?)             (\") }oxgc) { $e_string .= "Egbk::$1(" . e_qq('',  $2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\#) ((?:$qq_char)+?)             (\#) }oxgc) { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\() ((?:$qq_paren)+?)            (\)) }oxgc) { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\{) ((?:$qq_brace)+?)            (\}) }oxgc) { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\[) ((?:$qq_bracket)+?)          (\]) }oxgc) { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\<) ((?:$qq_angle)+?)            (\>) }oxgc) { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ qq \s* (\S) ((?:$qq_char)+?)             (\3) }oxgc) { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G (-[rwxoRWXOezfdlpSbcugkTB](?:\s+-[rwxoRWXOezfdlpSbcugkTB])+)
+                                                                         \s* (\") ((?:$qq_char)+?)             (\") }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_qq('',  $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\#) ((?:$qq_char)+?)             (\#) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\() ((?:$qq_paren)+?)            (\)) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\{) ((?:$qq_brace)+?)            (\}) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\[) ((?:$qq_bracket)+?)          (\]) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\<) ((?:$qq_angle)+?)            (\>) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) qq \s* (\S) ((?:$qq_char)+?)             (\3) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
 
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+    \s* (\') ((?:\\\1|\\\\|$q_char)+?)    (\') }oxgc) { $e_string .= "Egbk::$1(" . e_q ('',  $2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\#) ((?:\\\#|\\\\|$q_char)+?)    (\#) }oxgc) { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\() ((?:\\\)|\\\\|$q_paren)+?)   (\)) }oxgc) { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\{) ((?:\\\}|\\\\|$q_brace)+?)   (\}) }oxgc) { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\[) ((?:\\\]|\\\\|$q_bracket)+?) (\]) }oxgc) { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\<) ((?:\\\>|\\\\|$q_angle)+?)   (\>) }oxgc) { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ q  \s* (\S) ((?:\\\1|\\\\|$q_char)+?)    (\3) }oxgc) { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G (-[rwxoRWXOezfdlpSbcugkTB](?:\s+-[rwxoRWXOezfdlpSbcugkTB])+)
+                                                                         \s* (\') ((?:\\\1|\\\\|$q_char)+?)    (\') }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_q ('',  $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\#) ((?:\\\#|\\\\|$q_char)+?)    (\#) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\() ((?:\\\)|\\\\|$q_paren)+?)   (\)) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\{) ((?:\\\}|\\\\|$q_brace)+?)   (\}) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\[) ((?:\\\]|\\\\|$q_bracket)+?) (\]) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\<) ((?:\\\>|\\\\|$q_angle)+?)   (\>) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) q  \s* (\S) ((?:\\\1|\\\\|$q_char)+?)    (\3) }oxgc) { $e_string .= "Egbk::filetest(qw($1)," . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
 
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s* (\$ \w+(?: ::\w+)* (?: (?: ->)? (?: \( (?:$qq_paren)*? \) | \{ (?:$qq_brace)+? \} | \[ (?:$qq_bracket)+? \] ) )*) }oxgc)
-                                                                                                                         { $e_string .= "Egbk::$1($2)"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s* \( ((?:$qq_paren)*?) \) }oxgc)                       { $e_string .= "Egbk::$1($2)"; $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) (?= \s+ [a-z]+) }oxgc)                                   { $e_string .= "Egbk::$1";     $slash = 'm//'; }
-        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbctugkTBMAC]) \s+ (\w+) }oxgc)                                         { $e_string .= "Egbk::$1($2)"; $slash = 'm//'; }
+        elsif ($string =~ m{\G (-[rwxoRWXOezfdlpSbcugkTB](?:\s+-[rwxoRWXOezfdlpSbcugkTB])+) (\$ \w+(?: ::\w+)* (?: (?: ->)? (?: \( (?:$qq_paren)*? \) | \{ (?:$qq_brace)+? \} | \[ (?:$qq_bracket)+? \] ) )*) }oxgc)
+                                                                                                                           { $e_string .= "Egbk::filetest(qw($1),$2)"; $slash = 'm//'; }
+        elsif ($string =~ m{\G (-[rwxoRWXOezfdlpSbcugkTB](?:\s+-[rwxoRWXOezfdlpSbcugkTB])+) \( ((?:$qq_paren)*?) \) }oxgc)
+                                                                                                                           { $e_string .= "Egbk::filetest(qw($1),$2)"; $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) (?= [a-z]+) }oxgc)                                   { $e_string .= "Egbk::filetest qw($1),";    $slash = 'm//'; }
+        elsif ($string =~ m{\G ((?:-[rwxoRWXOezfdlpSbcugkTB]\s+){2,}) (\w+) }oxgc)                                         { $e_string .= "Egbk::filetest(qw($1),$2)"; $slash = 'm//'; }
 
-        elsif ($string =~ m{\G \b lstat (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .=   'Egbk::lstat';         $slash = 'm//'; }
-        elsif ($string =~ m{\G \b stat  (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .=   'Egbk::stat';          $slash = 'm//'; }
-        elsif ($string =~ m{\G \b chr   (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .=   'Egbk::chr';           $slash = 'm//'; }
-        elsif ($string =~ m{\G \b ord   (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .=   $function_ord;          $slash = 'div'; }
-        elsif ($string =~ m{\G \b glob  (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .=   'Egbk::glob';          $slash = 'm//'; }
-        elsif ($string =~ m{\G \b lc \b                                      }oxgc) { $e_string .=   'Egbk::lc_';           $slash = 'm//'; }
-        elsif ($string =~ m{\G \b uc \b                                      }oxgc) { $e_string .=   'Egbk::uc_';           $slash = 'm//'; }
-        elsif ($string =~ m{\G    -([rwxoRWXOezsfdlpSbctugkTBMAC]) \b        }oxgc) { $e_string .=   "Egbk::${1}_";         $slash = 'm//'; }
-        elsif ($string =~ m{\G \b lstat \b                                   }oxgc) { $e_string .=   'Egbk::lstat_';        $slash = 'm//'; }
-        elsif ($string =~ m{\G \b stat \b                                    }oxgc) { $e_string .=   'Egbk::stat_';         $slash = 'm//'; }
-        elsif ($string =~ m{\G \b chr \b                                     }oxgc) { $e_string .=   'Egbk::chr_';          $slash = 'm//'; }
-        elsif ($string =~ m{\G \b ord \b                                     }oxgc) { $e_string .=   $function_ord_;         $slash = 'div'; }
-        elsif ($string =~ m{\G \b glob \b                                    }oxgc) { $e_string .=   'Egbk::glob_';         $slash = 'm//'; }
-        elsif ($string =~ m{\G \b reverse \b                                 }oxgc) { $e_string .=   $function_reverse;      $slash = 'm//'; }
-        elsif ($string =~ m{\G \b opendir (\s* \( \s*) (?=[A-Za-z_])         }oxgc) { $e_string .=   "Egbk::opendir$1*";    $slash = 'm//'; }
-        elsif ($string =~ m{\G \b opendir (\s+)        (?=[A-Za-z_])         }oxgc) { $e_string .=   "Egbk::opendir$1*";    $slash = 'm//'; }
-        elsif ($string =~ m{\G \b unlink \b                                  }oxgc) { $e_string .=   'Egbk::unlink';        $slash = 'm//'; }
-        elsif ($string =~ m{\G \b chdir \b                                   }oxgc) { $e_string .=   'Egbk::chdir';         $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+    \s* (\") ((?:$qq_char)+?)             (\") }oxgc)    { $e_string .= "Egbk::$1(" . e_qq('',  $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\#) ((?:$qq_char)+?)             (\#) }oxgc)    { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\() ((?:$qq_paren)+?)            (\)) }oxgc)    { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\{) ((?:$qq_brace)+?)            (\}) }oxgc)    { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\[) ((?:$qq_bracket)+?)          (\]) }oxgc)    { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\<) ((?:$qq_angle)+?)            (\>) }oxgc)    { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ qq \s* (\S) ((?:$qq_char)+?)             (\3) }oxgc)    { $e_string .= "Egbk::$1(" . e_qq('qq',$2,$4,$3) . ")"; $slash = 'm//'; }
+
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+    \s* (\') ((?:\\\1|\\\\|$q_char)+?)    (\') }oxgc)    { $e_string .= "Egbk::$1(" . e_q ('',  $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\#) ((?:\\\#|\\\\|$q_char)+?)    (\#) }oxgc)    { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\() ((?:\\\)|\\\\|$q_paren)+?)   (\)) }oxgc)    { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\{) ((?:\\\}|\\\\|$q_brace)+?)   (\}) }oxgc)    { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\[) ((?:\\\]|\\\\|$q_bracket)+?) (\]) }oxgc)    { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\<) ((?:\\\>|\\\\|$q_angle)+?)   (\>) }oxgc)    { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ q  \s* (\S) ((?:\\\1|\\\\|$q_char)+?)    (\3) }oxgc)    { $e_string .= "Egbk::$1(" . e_q ('q', $2,$4,$3) . ")"; $slash = 'm//'; }
+
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s* (\$ \w+(?: ::\w+)* (?: (?: ->)? (?: \( (?:$qq_paren)*? \) | \{ (?:$qq_brace)+? \} | \[ (?:$qq_bracket)+? \] ) )*) }oxgc)
+                                                                                                                           { $e_string .= "Egbk::$1($2)";      $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s* \( ((?:$qq_paren)*?) \) }oxgc)                          { $e_string .= "Egbk::$1($2)";      $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) (?= \s+ [a-z]+) }oxgc)                                      { $e_string .= "Egbk::$1";          $slash = 'm//'; }
+        elsif ($string =~ m{\G -([rwxoRWXOezsfdlpSbcugkTBMAC]) \s+ (\w+) }oxgc)                                            { $e_string .= "Egbk::$1(::"."$2)"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -(t)                            \s+ (\w+) }oxgc)                                            { $e_string .= "-t $2";              $slash = 'm//'; }
+        elsif ($string =~ m{\G \b lstat         (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'Egbk::lstat';             $slash = 'm//'; }
+        elsif ($string =~ m{\G \b stat          (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'Egbk::stat';              $slash = 'm//'; }
+
+        # "-s '' ..." means file test "-s 'filename' ..." (not means "- s/// ...")
+        elsif ($string =~ m{\G -s                               \s+    \s* (\") ((?:$qq_char)+?)             (\") }oxgc)    { $e_string .= '-s ' . e_qq('',  $1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ qq \s* (\#) ((?:$qq_char)+?)             (\#) }oxgc)    { $e_string .= '-s ' . e_qq('qq',$1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ qq \s* (\() ((?:$qq_paren)+?)            (\)) }oxgc)    { $e_string .= '-s ' . e_qq('qq',$1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ qq \s* (\{) ((?:$qq_brace)+?)            (\}) }oxgc)    { $e_string .= '-s ' . e_qq('qq',$1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ qq \s* (\[) ((?:$qq_bracket)+?)          (\]) }oxgc)    { $e_string .= '-s ' . e_qq('qq',$1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ qq \s* (\<) ((?:$qq_angle)+?)            (\>) }oxgc)    { $e_string .= '-s ' . e_qq('qq',$1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ qq \s* (\S) ((?:$qq_char)+?)             (\3) }oxgc)    { $e_string .= '-s ' . e_qq('qq',$1,$3,$2); $slash = 'm//'; }
+
+        elsif ($string =~ m{\G -s                               \s+    \s* (\') ((?:\\\1|\\\\|$q_char)+?)    (\') }oxgc)    { $e_string .= '-s ' . e_q ('',  $1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ q  \s* (\#) ((?:\\\#|\\\\|$q_char)+?)    (\#) }oxgc)    { $e_string .= '-s ' . e_q ('q', $1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ q  \s* (\() ((?:\\\)|\\\\|$q_paren)+?)   (\)) }oxgc)    { $e_string .= '-s ' . e_q ('q', $1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ q  \s* (\{) ((?:\\\}|\\\\|$q_brace)+?)   (\}) }oxgc)    { $e_string .= '-s ' . e_q ('q', $1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ q  \s* (\[) ((?:\\\]|\\\\|$q_bracket)+?) (\]) }oxgc)    { $e_string .= '-s ' . e_q ('q', $1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ q  \s* (\<) ((?:\\\>|\\\\|$q_angle)+?)   (\>) }oxgc)    { $e_string .= '-s ' . e_q ('q', $1,$3,$2); $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ q  \s* (\S) ((?:\\\1|\\\\|$q_char)+?)    (\3) }oxgc)    { $e_string .= '-s ' . e_q ('q', $1,$3,$2); $slash = 'm//'; }
+
+        elsif ($string =~ m{\G -s                               \s* (\$ \w+(?: ::\w+)* (?: (?: ->)? (?: \( (?:$qq_paren)*? \) | \{ (?:$qq_brace)+? \} | \[ (?:$qq_bracket)+? \] ) )*) }oxgc)
+                                                                                                                            { $e_string .= "-s $1";   $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s* \( ((?:$qq_paren)*?) \) }oxgc)                          { $e_string .= "-s ($1)"; $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               (?= \s+ [a-z]+) }oxgc)                                      { $e_string .= '-s';      $slash = 'm//'; }
+        elsif ($string =~ m{\G -s                               \s+ (\w+) }oxgc)                                            { $e_string .= "-s $1";   $slash = 'm//'; }
+
+        elsif ($string =~ m{\G \b bytes::length (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'length';                   $slash = 'm//'; }
+        elsif ($string =~ m{\G \b bytes::chr    (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'chr';                      $slash = 'm//'; }
+        elsif ($string =~ m{\G \b chr           (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'Egbk::chr';               $slash = 'm//'; }
+        elsif ($string =~ m{\G \b bytes::ord    (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'ord';                      $slash = 'div'; }
+        elsif ($string =~ m{\G \b ord           (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= $function_ord;              $slash = 'div'; }
+        elsif ($string =~ m{\G \b glob          (?= \s+[A-Za-z_]|\s*['"`\$\@\&\*\(]) }oxgc) { $e_string .= 'Egbk::glob';              $slash = 'm//'; }
+        elsif ($string =~ m{\G \b lc \b                                              }oxgc) { $e_string .= 'Egbk::lc_';               $slash = 'm//'; }
+        elsif ($string =~ m{\G \b lcfirst \b                                         }oxgc) { $e_string .= 'Egbk::lcfirst_';          $slash = 'm//'; }
+        elsif ($string =~ m{\G \b uc \b                                              }oxgc) { $e_string .= 'Egbk::uc_';               $slash = 'm//'; }
+        elsif ($string =~ m{\G \b ucfirst \b                                         }oxgc) { $e_string .= 'Egbk::ucfirst_';          $slash = 'm//'; }
+
+        elsif ($string =~ m{\G    (-[rwxoRWXOezfdlpSbcugkTB](?:\s+-[rwxoRWXOezfdlpSbcugkTB])+)
+                                                                  \b                 }oxgc) { $e_string .= "Egbk::filetest_(qw($1))"; $slash = 'm//'; }
+        elsif ($string =~ m{\G    -([rwxoRWXOezsfdlpSbcugkTBMAC]) \b                 }oxgc) { $e_string .= "Egbk::${1}_";             $slash = 'm//'; }
+        elsif ($string =~ m{\G \b lstat \b                                           }oxgc) { $e_string .= 'Egbk::lstat_';            $slash = 'm//'; }
+        elsif ($string =~ m{\G \b stat \b                                            }oxgc) { $e_string .= 'Egbk::stat_';             $slash = 'm//'; }
+        elsif ($string =~ m{\G    -s                              \b                 }oxgc) { $e_string .= '-s ';                      $slash = 'm//'; }
+
+        elsif ($string =~ m{\G \b bytes::length \b                                   }oxgc) { $e_string .= 'length';                   $slash = 'm//'; }
+        elsif ($string =~ m{\G \b bytes::chr \b                                      }oxgc) { $e_string .= 'chr';                      $slash = 'm//'; }
+        elsif ($string =~ m{\G \b chr \b                                             }oxgc) { $e_string .= 'Egbk::chr_';              $slash = 'm//'; }
+        elsif ($string =~ m{\G \b bytes::ord \b                                      }oxgc) { $e_string .= 'ord';                      $slash = 'div'; }
+        elsif ($string =~ m{\G \b ord \b                                             }oxgc) { $e_string .= $function_ord_;             $slash = 'div'; }
+        elsif ($string =~ m{\G \b glob \b                                            }oxgc) { $e_string .= 'Egbk::glob_';             $slash = 'm//'; }
+        elsif ($string =~ m{\G \b reverse \b                                         }oxgc) { $e_string .= $function_reverse;          $slash = 'm//'; }
+        elsif ($string =~ m{\G \b opendir (\s* \( \s*) (?=[A-Za-z_])                 }oxgc) { $e_string .= "Egbk::opendir$1*";        $slash = 'm//'; }
+        elsif ($string =~ m{\G \b opendir (\s+)        (?=[A-Za-z_])                 }oxgc) { $e_string .= "Egbk::opendir$1*";        $slash = 'm//'; }
+        elsif ($string =~ m{\G \b unlink \b                                          }oxgc) { $e_string .= 'Egbk::unlink';            $slash = 'm//'; }
+
+# chdir
+        elsif ($string =~ m{\G \b (chdir) \b (?! \s* => ) }oxgc) {
+            $slash = 'm//';
+
+            my $e_string = 'Egbk::chdir';
+
+            while ($string =~ /\G ( \s+ | \( | \#.* ) /oxgc) {
+                $e_string .= $1;
+            }
+
+# end of chdir
+            if    ($string =~ /\G (?= [,;\)\}\]] )          /oxgc) { return $e_string;                               }
+
+# chdir scalar value
+            elsif ($string =~ /\G ( [\$\@\&\*] $qq_scalar ) /oxgc) { $e_string .= e_string($1);  next E_STRING_LOOP; }
+
+# chdir qq//
+            elsif ($string =~ /\G \b (qq) \b /oxgc) {
+                if ($string =~ /\G (\#) ((?:$qq_char)*?) (\#) /oxgc)                             { $e_string .= e_chdir('qq',$1,$3,$2);   next E_STRING_LOOP; } # qq# #  --> qr # #
+                else {
+                    while ($string !~ /\G \z/oxgc) {
+                        if    ($string =~ /\G (\s+|\#.*)                             /oxgc)      { $e_string .= $1; }
+                        elsif ($string =~ /\G (\()          ((?:$qq_paren)*?)   (\)) /oxgc)      { $e_string .= e_chdir('qq',$1,$3,$2);   next E_STRING_LOOP; } # qq ( ) --> qr ( )
+                        elsif ($string =~ /\G (\{)          ((?:$qq_brace)*?)   (\}) /oxgc)      { $e_string .= e_chdir('qq',$1,$3,$2);   next E_STRING_LOOP; } # qq { } --> qr { }
+                        elsif ($string =~ /\G (\[)          ((?:$qq_bracket)*?) (\]) /oxgc)      { $e_string .= e_chdir('qq',$1,$3,$2);   next E_STRING_LOOP; } # qq [ ] --> qr [ ]
+                        elsif ($string =~ /\G (\<)          ((?:$qq_angle)*?)   (\>) /oxgc)      { $e_string .= e_chdir('qq',$1,$3,$2);   next E_STRING_LOOP; } # qq < > --> qr < >
+                        elsif ($string =~ /\G ([*\-:?\\^|]) ((?:$qq_char)*?)    (\1) /oxgc)      { $e_string .= e_chdir('qq','{','}',$2); next E_STRING_LOOP; } # qq | | --> qr { }
+                        elsif ($string =~ /\G (\S)          ((?:$qq_char)*?)    (\1) /oxgc)      { $e_string .= e_chdir('qq',$1,$3,$2);   next E_STRING_LOOP; } # qq * * --> qr * *
+                    }
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
+                }
+            }
+
+# chdir q//
+            elsif ($string =~ /\G \b (q) \b /oxgc) {
+                if ($string =~ /\G (\#) ((?:\\\#|\\\\|$q_char)*?) (\#) /oxgc)                    { $e_string .= e_chdir_q('q',$1,$3,$2);   next E_STRING_LOOP; } # q# #  --> qr # #
+                else {
+                    while ($string !~ /\G \z/oxgc) {
+                        if    ($string =~ /\G (\s+|\#.*)                                  /oxgc) { $e_string .= $1; }
+                        elsif ($string =~ /\G (\() ((?:\\\\|\\\)|\\\(|$q_paren)*?)   (\)) /oxgc) { $e_string .= e_chdir_q('q',$1,$3,$2);   next E_STRING_LOOP; } # q ( ) --> qr ( )
+                        elsif ($string =~ /\G (\{) ((?:\\\\|\\\}|\\\{|$q_brace)*?)   (\}) /oxgc) { $e_string .= e_chdir_q('q',$1,$3,$2);   next E_STRING_LOOP; } # q { } --> qr { }
+                        elsif ($string =~ /\G (\[) ((?:\\\\|\\\]|\\\[|$q_bracket)*?) (\]) /oxgc) { $e_string .= e_chdir_q('q',$1,$3,$2);   next E_STRING_LOOP; } # q [ ] --> qr [ ]
+                        elsif ($string =~ /\G (\<) ((?:\\\\|\\\>|\\\<|$q_angle)*?)   (\>) /oxgc) { $e_string .= e_chdir_q('q',$1,$3,$2);   next E_STRING_LOOP; } # q < > --> qr < >
+                        elsif ($string =~ /\G ([*\-:?\\^|])       ((?:$q_char)*?)    (\1) /oxgc) { $e_string .= e_chdir_q('q','{','}',$2); next E_STRING_LOOP; } # q | | --> qr { }
+                        elsif ($string =~ /\G (\S) ((?:\\\\|\\\1|     $q_char)*?)    (\1) /oxgc) { $e_string .= e_chdir_q('q',$1,$3,$2);   next E_STRING_LOOP; } # q * * --> qr * *
+                    }
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
+                }
+            }
+
+# chdir ''
+            elsif ($string =~ /\G (\') /oxgc) {
+                my $q_string = '';
+                while ($string !~ /\G \z/oxgc) {
+                    if    ($string =~ /\G (\\\\)    /oxgc) { $q_string .= $1; }
+                    elsif ($string =~ /\G (\\\')    /oxgc) { $q_string .= $1; }
+                    elsif ($string =~ /\G \'        /oxgc)                                       { $e_string .= e_chdir_q('',"'","'",$q_string); next E_STRING_LOOP; }
+                    elsif ($string =~ /\G ($q_char) /oxgc) { $q_string .= $1; }
+                }
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
+            }
+
+# chdir ""
+            elsif ($string =~ /\G (\") /oxgc) {
+                my $qq_string = '';
+                while ($string !~ /\G \z/oxgc) {
+                    if    ($string =~ /\G (\\\\)    /oxgc) { $qq_string .= $1; }
+                    elsif ($string =~ /\G (\\\")    /oxgc) { $qq_string .= $1; }
+                    elsif ($string =~ /\G \"        /oxgc)                                       { $e_string .= e_chdir('','"','"',$qq_string); next E_STRING_LOOP; }
+                    elsif ($string =~ /\G ($q_char) /oxgc) { $qq_string .= $1; }
+                }
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
+            }
+        }
 
 # split
         elsif ($string =~ m{\G \b (split) \b (?! \s* => ) }oxgc) {
@@ -1784,36 +2171,36 @@ E_STRING_LOOP:
 
 # split qq//
             elsif ($string =~ /\G \b (qq) \b /oxgc) {
-                if ($string =~ /\G (\#) ((?:$qq_char)*?) (\#) /oxgc)                             { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq# #  --> qr # #
+                if ($string =~ /\G (\#) ((?:$qq_char)*?) (\#) /oxgc)                        { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq# #  --> qr # #
                 else {
                     while ($string !~ /\G \z/oxgc) {
-                        if    ($string =~ /\G (\s+|\#.*)                                  /oxgc) { $e_string .= $1; }
-                        elsif ($string =~ /\G (\()               ((?:$qq_paren)*?)   (\)) /oxgc) { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq ( ) --> qr ( )
-                        elsif ($string =~ /\G (\{)               ((?:$qq_brace)*?)   (\}) /oxgc) { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq { } --> qr { }
-                        elsif ($string =~ /\G (\[)               ((?:$qq_bracket)*?) (\]) /oxgc) { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq [ ] --> qr [ ]
-                        elsif ($string =~ /\G (\<)               ((?:$qq_angle)*?)   (\>) /oxgc) { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq < > --> qr < >
-                        elsif ($string =~ /\G ([\*\-\:\?\\\^\|]) ((?:$qq_char)*?)    (\1) /oxgc) { $e_string .= e_split('qr','{','}',$2,''); next E_STRING_LOOP; } # qq | | --> qr { }
-                        elsif ($string =~ /\G (\S)               ((?:$qq_char)*?)    (\1) /oxgc) { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq * * --> qr * *
+                        if    ($string =~ /\G (\s+|\#.*)                             /oxgc) { $e_string .= $1; }
+                        elsif ($string =~ /\G (\()          ((?:$qq_paren)*?)   (\)) /oxgc) { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq ( ) --> qr ( )
+                        elsif ($string =~ /\G (\{)          ((?:$qq_brace)*?)   (\}) /oxgc) { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq { } --> qr { }
+                        elsif ($string =~ /\G (\[)          ((?:$qq_bracket)*?) (\]) /oxgc) { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq [ ] --> qr [ ]
+                        elsif ($string =~ /\G (\<)          ((?:$qq_angle)*?)   (\>) /oxgc) { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq < > --> qr < >
+                        elsif ($string =~ /\G ([*\-:?\\^|]) ((?:$qq_char)*?)    (\1) /oxgc) { $e_string .= e_split('qr','{','}',$2,''); next E_STRING_LOOP; } # qq | | --> qr { }
+                        elsif ($string =~ /\G (\S)          ((?:$qq_char)*?)    (\1) /oxgc) { $e_string .= e_split('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # qq * * --> qr * *
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
             }
 
 # split qr//
             elsif ($string =~ /\G \b (qr) \b /oxgc) {
-                if ($string =~ /\G (\#) ((?:$qq_char)*?) (\#) ([imosxp]*) /oxgc)                             { $e_string .= e_split  ('qr',$1,$3,$2,$4);   next E_STRING_LOOP; } # qr# #
+                if ($string =~ /\G (\#) ((?:$qq_char)*?) (\#) ([imosxp]*) /oxgc)                        { $e_string .= e_split  ('qr',$1,$3,$2,$4);   next E_STRING_LOOP; } # qr# #
                 else {
                     while ($string !~ /\G \z/oxgc) {
-                        if    ($string =~ /\G (\s+|\#.*)                                              /oxgc) { $e_string .= $1; }
-                        elsif ($string =~ /\G (\()               ((?:$qq_paren)*?)   (\)) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr ( )
-                        elsif ($string =~ /\G (\{)               ((?:$qq_brace)*?)   (\}) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr { }
-                        elsif ($string =~ /\G (\[)               ((?:$qq_bracket)*?) (\]) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr [ ]
-                        elsif ($string =~ /\G (\<)               ((?:$qq_angle)*?)   (\>) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr < >
-                        elsif ($string =~ /\G (\')               ((?:$qq_char)*?)    (\') ([imosxp]*) /oxgc) { $e_string .= e_split_q('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr ' '
-                        elsif ($string =~ /\G ([\*\-\:\?\\\^\|]) ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr','{','}',$2,$4); next E_STRING_LOOP; } # qr | | --> qr { }
-                        elsif ($string =~ /\G (\S)               ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr * *
+                        if    ($string =~ /\G (\s+|\#.*)                                         /oxgc) { $e_string .= $1; }
+                        elsif ($string =~ /\G (\()          ((?:$qq_paren)*?)   (\)) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr ( )
+                        elsif ($string =~ /\G (\{)          ((?:$qq_brace)*?)   (\}) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr { }
+                        elsif ($string =~ /\G (\[)          ((?:$qq_bracket)*?) (\]) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr [ ]
+                        elsif ($string =~ /\G (\<)          ((?:$qq_angle)*?)   (\>) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr < >
+                        elsif ($string =~ /\G (\')          ((?:$qq_char)*?)    (\') ([imosxp]*) /oxgc) { $e_string .= e_split_q('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr ' '
+                        elsif ($string =~ /\G ([*\-:?\\^|]) ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr','{','}',$2,$4); next E_STRING_LOOP; } # qr | | --> qr { }
+                        elsif ($string =~ /\G (\S)          ((?:$qq_char)*?)    (\1) ([imosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # qr * *
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
             }
 
@@ -1821,34 +2208,34 @@ E_STRING_LOOP:
             elsif ($string =~ /\G \b (q) \b /oxgc) {
                 if ($string =~ /\G (\#) ((?:\\\#|\\\\|$q_char)*?) (\#) /oxgc)                    { $e_string .= e_split_q('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # q# #  --> qr # #
                 else {
-                    while ($string =~ /\G \z/oxgc) {
+                    while ($string !~ /\G \z/oxgc) {
                         if    ($string =~ /\G (\s+|\#.*)                                  /oxgc) { $e_string .= $1; }
                         elsif ($string =~ /\G (\() ((?:\\\\|\\\)|\\\(|$q_paren)*?)   (\)) /oxgc) { $e_string .= e_split_q('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # q ( ) --> qr ( )
                         elsif ($string =~ /\G (\{) ((?:\\\\|\\\}|\\\{|$q_brace)*?)   (\}) /oxgc) { $e_string .= e_split_q('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # q { } --> qr { }
                         elsif ($string =~ /\G (\[) ((?:\\\\|\\\]|\\\[|$q_bracket)*?) (\]) /oxgc) { $e_string .= e_split_q('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # q [ ] --> qr [ ]
                         elsif ($string =~ /\G (\<) ((?:\\\\|\\\>|\\\<|$q_angle)*?)   (\>) /oxgc) { $e_string .= e_split_q('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # q < > --> qr < >
-                        elsif ($string =~ /\G ([\*\-\:\?\\\^\|]) ((?:$q_char)*?)     (\1) /oxgc) { $e_string .= e_split_q('qr','{','}',$2,''); next E_STRING_LOOP; } # q | | --> qr { }
+                        elsif ($string =~ /\G ([*\-:?\\^|])       ((?:$q_char)*?)    (\1) /oxgc) { $e_string .= e_split_q('qr','{','}',$2,''); next E_STRING_LOOP; } # q | | --> qr { }
                         elsif ($string =~ /\G (\S) ((?:\\\\|\\\1|     $q_char)*?)    (\1) /oxgc) { $e_string .= e_split_q('qr',$1,$3,$2,'');   next E_STRING_LOOP; } # q * * --> qr * *
                     }
-                    croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                    die "$__FILE__: Can't find string terminator anywhere before EOF";
                 }
             }
 
 # split m//
             elsif ($string =~ /\G \b (m) \b /oxgc) {
-                if ($string =~ /\G (\#) ((?:$qq_char)*?) (\#) ([cgimosxp]*) /oxgc)                             { $e_string .= e_split  ('qr',$1,$3,$2,$4);   next E_STRING_LOOP; } # m# #  --> qr # #
+                if ($string =~ /\G (\#) ((?:$qq_char)*?) (\#) ([cgimosxp]*) /oxgc)                        { $e_string .= e_split  ('qr',$1,$3,$2,$4);   next E_STRING_LOOP; } # m# #  --> qr # #
                 else {
                     while ($string !~ /\G \z/oxgc) {
-                        if    ($string =~ /\G (\s+|\#.*)                                                /oxgc) { $e_string .= $1; }
-                        elsif ($string =~ /\G (\()               ((?:$qq_paren)*?)   (\)) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m ( ) --> qr ( )
-                        elsif ($string =~ /\G (\{)               ((?:$qq_brace)*?)   (\}) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m { } --> qr { }
-                        elsif ($string =~ /\G (\[)               ((?:$qq_bracket)*?) (\]) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m [ ] --> qr [ ]
-                        elsif ($string =~ /\G (\<)               ((?:$qq_angle)*?)   (\>) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m < > --> qr < >
-                        elsif ($string =~ /\G (\')               ((?:$qq_char)*?)    (\') ([cgimosxp]*) /oxgc) { $e_string .= e_split_q('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m ' ' --> qr ' '
-                        elsif ($string =~ /\G ([\*\-\:\?\\\^\|]) ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr','{','}',$2,$4); next E_STRING_LOOP; } # m | | --> qr { }
-                        elsif ($string =~ /\G (\S)               ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m * * --> qr * *
+                        if    ($string =~ /\G (\s+|\#.*)                                           /oxgc) { $e_string .= $1; }
+                        elsif ($string =~ /\G (\()          ((?:$qq_paren)*?)   (\)) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m ( ) --> qr ( )
+                        elsif ($string =~ /\G (\{)          ((?:$qq_brace)*?)   (\}) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m { } --> qr { }
+                        elsif ($string =~ /\G (\[)          ((?:$qq_bracket)*?) (\]) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m [ ] --> qr [ ]
+                        elsif ($string =~ /\G (\<)          ((?:$qq_angle)*?)   (\>) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m < > --> qr < >
+                        elsif ($string =~ /\G (\')          ((?:$qq_char)*?)    (\') ([cgimosxp]*) /oxgc) { $e_string .= e_split_q('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m ' ' --> qr ' '
+                        elsif ($string =~ /\G ([*\-:?\\^|]) ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr','{','}',$2,$4); next E_STRING_LOOP; } # m | | --> qr { }
+                        elsif ($string =~ /\G (\S)          ((?:$qq_char)*?)    (\1) ([cgimosxp]*) /oxgc) { $e_string .= e_split  ('qr',$1, $3, $2,$4); next E_STRING_LOOP; } # m * * --> qr * *
                     }
-                    croak "$__FILE__: Search pattern not terminated";
+                    die "$__FILE__: Search pattern not terminated";
                 }
             }
 
@@ -1857,11 +2244,11 @@ E_STRING_LOOP:
                 my $q_string = '';
                 while ($string !~ /\G \z/oxgc) {
                     if    ($string =~ /\G (\\\\)    /oxgc) { $q_string .= $1; }
-                    elsif ($string =~ /\G (\\\')    /oxgc) { $q_string .= $1; }                               # splitqr'' --> split qr''
-                    elsif ($string =~ /\G \'        /oxgc)                                                    { $e_string .= e_split_q(q{ qr},"'","'",$q_string,''); next E_STRING_LOOP; } # ' ' --> qr ' '
+                    elsif ($string =~ /\G (\\\')    /oxgc) { $q_string .= $1; } # splitqr'' --> split qr''
+                    elsif ($string =~ /\G \'        /oxgc)                      { $e_string .= e_split_q(q{ qr},"'","'",$q_string,''); next E_STRING_LOOP; } # ' ' --> qr ' '
                     elsif ($string =~ /\G ($q_char) /oxgc) { $q_string .= $1; }
                 }
-                croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
             }
 
 # split ""
@@ -1869,11 +2256,11 @@ E_STRING_LOOP:
                 my $qq_string = '';
                 while ($string !~ /\G \z/oxgc) {
                     if    ($string =~ /\G (\\\\)    /oxgc) { $qq_string .= $1; }
-                    elsif ($string =~ /\G (\\\")    /oxgc) { $qq_string .= $1; }                              # splitqr"" --> split qr""
-                    elsif ($string =~ /\G \"        /oxgc)                                                    { $e_string .= e_split(q{ qr},'"','"',$qq_string,''); next E_STRING_LOOP; } # " " --> qr " "
+                    elsif ($string =~ /\G (\\\")    /oxgc) { $qq_string .= $1; } # splitqr"" --> split qr""
+                    elsif ($string =~ /\G \"        /oxgc)                       { $e_string .= e_split(q{ qr},'"','"',$qq_string,''); next E_STRING_LOOP; } # " " --> qr " "
                     elsif ($string =~ /\G ($q_char) /oxgc) { $qq_string .= $1; }
                 }
-                croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
             }
 
 # split //
@@ -1881,11 +2268,11 @@ E_STRING_LOOP:
                 my $regexp = '';
                 while ($string !~ /\G \z/oxgc) {
                     if    ($string =~ /\G (\\\\)           /oxgc) { $regexp .= $1; }
-                    elsif ($string =~ /\G (\\\/)           /oxgc) { $regexp .= $1; }                          # splitqr// --> split qr//
-                    elsif ($string =~ /\G \/ ([cgimosxp]*) /oxgc)                                             { $e_string .= e_split(q{ qr}, '/','/',$regexp,$1); next E_STRING_LOOP; } # / / --> qr / /
+                    elsif ($string =~ /\G (\\\/)           /oxgc) { $regexp .= $1; } # splitqr// --> split qr//
+                    elsif ($string =~ /\G \/ ([cgimosxp]*) /oxgc)                    { $e_string .= e_split(q{ qr}, '/','/',$regexp,$1); next E_STRING_LOOP; } # / / --> qr / /
                     elsif ($string =~ /\G ($q_char)        /oxgc) { $regexp .= $1; }
                 }
-                croak "$__FILE__: Search pattern not terminated";
+                die "$__FILE__: Search pattern not terminated";
             }
         }
 
@@ -1905,7 +2292,7 @@ E_STRING_LOOP:
                     elsif ($string =~ /\G (\<) ((?:$qq_angle)*?)   (\>) /oxgc) { $e_string .= $e . e_qq($ope,$1,$3,$2); next E_STRING_LOOP; } # qq < >
                     elsif ($string =~ /\G (\S) ((?:$qq_char)*?)    (\1) /oxgc) { $e_string .= $e . e_qq($ope,$1,$3,$2); next E_STRING_LOOP; } # qq * *
                 }
-                croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
             }
         }
 
@@ -1926,7 +2313,7 @@ E_STRING_LOOP:
                     elsif ($string =~ /\G (\') ((?:$qq_char)*?)    (\') /oxgc) { $e_string .= $e . e_q ($ope,$1,$3,$2); next E_STRING_LOOP; } # qx ' '
                     elsif ($string =~ /\G (\S) ((?:$qq_char)*?)    (\1) /oxgc) { $e_string .= $e . e_qq($ope,$1,$3,$2); next E_STRING_LOOP; } # qx * *
                 }
-                croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
             }
         }
 
@@ -1946,7 +2333,7 @@ E_STRING_LOOP:
                     elsif ($string =~ /\G (\<) ((?:\\\\|\\\>|\\\<|$q_angle)*?)   (\>) /oxgc) { $e_string .= $e . e_q($ope,$1,$3,$2); next E_STRING_LOOP; } # q < >
                     elsif ($string =~ /\G (\S) ((?:\\\\|\\\1|     $q_char)*?)    (\1) /oxgc) { $e_string .= $e . e_q($ope,$1,$3,$2); next E_STRING_LOOP; } # q * *
                 }
-                croak "$__FILE__: Can't find string terminator anywhere before EOF";
+                die "$__FILE__: Can't find string terminator anywhere before EOF";
             }
         }
 
@@ -1971,7 +2358,7 @@ E_STRING_LOOP:
         }
 
 # << (bit shift)   --- not here document
-        elsif ($string =~ /\G ( << \s* ) (?= [0-9\$\@\&] ) /oxgc) { $slash = 'm//'; $e_string .= $1;           }
+        elsif ($string =~ /\G ( << \s* ) (?= [0-9\$\@\&] ) /oxgc) { $slash = 'm//'; $e_string .= $1; }
 
 # <<'HEREDOC'
         elsif ($string =~ /\G ( << '([a-zA-Z_0-9]*)' ) /oxgc) {
@@ -1980,13 +2367,16 @@ E_STRING_LOOP:
             my $delimiter  = $2;
 
             # get here document
-            my $script = CORE::substr $_, pos $_;
-            $script =~ s/.*?\n//oxm;
-            if ($script =~ /\A (.*? \n $delimiter \n) /xms) {
-                $heredoc{$delimiter} = $1;
+            if ($here_script eq '') {
+                $here_script = CORE::substr $_, pos $_;
+                $here_script =~ s/.*?\n//oxm;
+            }
+            if ($here_script =~ s/\A (.*?) \n $delimiter \n //xms) {
+                push @heredoc, $1 . qq{\n$delimiter\n};
+                push @heredoc_delimiter, $delimiter;
             }
             else {
-                croak "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
+                die "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
             }
             $e_string .= $here_quote;
         }
@@ -1998,13 +2388,16 @@ E_STRING_LOOP:
             my $delimiter  = $2;
 
             # get here document
-            my $script = CORE::substr $_, pos $_;
-            $script =~ s/.*?\n//oxm;
-            if ($script =~ /\A (.*? \n $delimiter \n) /xms) {
-                $heredoc{$delimiter} = $1;
+            if ($here_script eq '') {
+                $here_script = CORE::substr $_, pos $_;
+                $here_script =~ s/.*?\n//oxm;
+            }
+            if ($here_script =~ s/\A (.*?) \n $delimiter \n //xms) {
+                push @heredoc, $1 . qq{\n$delimiter\n};
+                push @heredoc_delimiter, $delimiter;
             }
             else {
-                croak "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
+                die "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
             }
             $e_string .= $here_quote;
         }
@@ -2014,16 +2407,18 @@ E_STRING_LOOP:
             $slash = 'm//';
             my $here_quote = $1;
             my $delimiter  = $2;
-            $heredoc_qq++;
 
             # get here document
-            my $script = CORE::substr $_, pos $_;
-            $script =~ s/.*?\n//oxm;
-            if ($script =~ /\A (.*? \n $delimiter \n) /xms) {
-                $heredoc{$delimiter} = $1;
+            if ($here_script eq '') {
+                $here_script = CORE::substr $_, pos $_;
+                $here_script =~ s/.*?\n//oxm;
+            }
+            if ($here_script =~ s/\A (.*?) \n $delimiter \n //xms) {
+                push @heredoc, e_heredoc($1) . qq{\n$delimiter\n};
+                push @heredoc_delimiter, $delimiter;
             }
             else {
-                croak "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
+                die "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
             }
             $e_string .= $here_quote;
         }
@@ -2033,16 +2428,18 @@ E_STRING_LOOP:
             $slash = 'm//';
             my $here_quote = $1;
             my $delimiter  = $2;
-            $heredoc_qq++;
 
             # get here document
-            my $script = CORE::substr $_, pos $_;
-            $script =~ s/.*?\n//oxm;
-            if ($script =~ /\A (.*? \n $delimiter \n) /xms) {
-                $heredoc{$delimiter} = $1;
+            if ($here_script eq '') {
+                $here_script = CORE::substr $_, pos $_;
+                $here_script =~ s/.*?\n//oxm;
+            }
+            if ($here_script =~ s/\A (.*?) \n $delimiter \n //xms) {
+                push @heredoc, e_heredoc($1) . qq{\n$delimiter\n};
+                push @heredoc_delimiter, $delimiter;
             }
             else {
-                croak "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
+                die "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
             }
             $e_string .= $here_quote;
         }
@@ -2052,16 +2449,18 @@ E_STRING_LOOP:
             $slash = 'm//';
             my $here_quote = $1;
             my $delimiter  = $2;
-            $heredoc_qq++;
 
             # get here document
-            my $script = CORE::substr $_, pos $_;
-            $script =~ s/.*?\n//oxm;
-            if ($script =~ /\A (.*? \n $delimiter \n) /xms) {
-                $heredoc{$delimiter} = $1;
+            if ($here_script eq '') {
+                $here_script = CORE::substr $_, pos $_;
+                $here_script =~ s/.*?\n//oxm;
+            }
+            if ($here_script =~ s/\A (.*?) \n $delimiter \n //xms) {
+                push @heredoc, e_heredoc($1) . qq{\n$delimiter\n};
+                push @heredoc_delimiter, $delimiter;
             }
             else {
-                croak "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
+                die "$__FILE__: Can't find string terminator $delimiter anywhere before EOF";
             }
             $e_string .= $here_quote;
         }
@@ -2076,10 +2475,11 @@ E_STRING_LOOP:
         # any operator before m//
         elsif ($string =~ /\G (
 
-            != | !~ | ! |
+            !~~ | !~ | != | ! |
             %= | % |
             &&= | && | &= | & |
             -= | -> | - |
+            :\s*= |
             : |
             <<= | <=> | <= | < |
             == | => | =~ | = |
@@ -2107,11 +2507,64 @@ E_STRING_LOOP:
 
         # system error
         else {
-            croak "$__FILE__: oops, this shouldn't happen!";
+            die "$__FILE__: oops, this shouldn't happen!";
         }
     }
 
     return $e_string;
+}
+
+#
+# classic character class ( . \D \S \W \d \s \w \H \V \h \v )
+#
+sub classic_character_class {
+    my($char,$modifier) = @_;
+
+    return {
+        '.'  => ($modifier =~ /s/) ?
+                '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])' :
+                '(?:[\x81-\xFE][\x00-\xFF]|[^\x0A])',
+        '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^0-9])',
+        '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\x09\x0A\x0C\x0D\x20])',
+        '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^0-9A-Z_a-z])',
+        '\d' => '[0-9]',
+                 # \t  \n  \f  \r space
+        '\s' => '[\x09\x0A\x0C\x0D\x20]',
+        '\w' => '[0-9A-Z_a-z]',
+
+        # \h \v \H \V
+        #
+        # P.114 Character Class Shortcuts
+        # in Chapter 7: In the World of Regular Expressions
+        # of ISBN 978-0-596-52010-6 Learning Perl, Fifth Edition
+
+        '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\x09\x20])',
+        '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\x0C\x0A\x0D])',
+        '\h' => '[\x09\x20]',
+        '\v' => '[\x0C\x0A\x0D]',
+
+        # \b \B
+        #
+        # P.131 Word boundaries: \b, \B, \<, \>, ...
+        # in Chapter 3: Overview of Regular Expression Features and Flavors
+        # of ISBN 0-596-00289-0 Mastering Regular Expressions, Second edition
+
+        # '\b' => '(?:(?<=\A|\W)(?=\w)|(?<=\w)(?=\W|\z))',
+        '\b' => '(?:\A(?=[0-9A-Z_a-z])|(?<=[\x00-\x2F\x40\x5B-\x5E\x60\x7B-\xFF])(?=[0-9A-Z_a-z])|(?<=[0-9A-Z_a-z])(?=[\x00-\x2F\x40\x5B-\x5E\x60\x7B-\xFF]|\z))',
+
+        # '\B' => '(?:(?<=\w)(?=\w)|(?<=\W)(?=\W))',
+        '\B' => '(?:(?<=[0-9A-Z_a-z])(?=[0-9A-Z_a-z])|(?<=[\x00-\x2F\x40\x5B-\x5E\x60\x7B-\xFF])(?=[\x00-\x2F\x40\x5B-\x5E\x60\x7B-\xFF]))',
+
+    }->{$char};
+}
+
+#
+# escape capture ($1, $2, $3, ...)
+#
+sub e_capture {
+
+    return join '', '${Egbk::capture(', $_[0], ')}';
+    return join '', '$',                 $_[0];
 }
 
 #
@@ -2136,20 +2589,21 @@ sub e_tr {
             $e_tr = qq{tr$charclass$e$charclass2$modifier};
         }
         else {
-            $e_tr = qq{$variable =~ tr$charclass$e$charclass2$modifier};
+            $e_tr = qq{$variable${bind_operator}tr$charclass$e$charclass2$modifier};
         }
     }
     else {
         if ($variable eq '') {
-            $e_tr = qq{Egbk::tr(\$_,$charclass,$e$charclass2,'$modifier')};
+            $e_tr = qq{Egbk::tr(\$_,      ' =~ ',          $charclass,$e$charclass2,'$modifier')};
         }
         else {
-            $e_tr = qq{Egbk::tr($variable,$charclass,$e$charclass2,'$modifier')};
+            $e_tr = qq{Egbk::tr($variable,'$bind_operator',$charclass,$e$charclass2,'$modifier')};
         }
     }
 
-    # clear tr variable
-    $tr_variable  = '';
+    # clear tr/// variable
+    $tr_variable = '';
+    $bind_operator = '';
 
     return $e_tr;
 }
@@ -2180,10 +2634,7 @@ sub q_tr {
         return e_q('q', '{', '}', $charclass); # --> q{ }
     }
     else {
-        for my $char (
-            qw( ! " $ % & * + . : = ? @ ^ ` | ~ ),
-            "\xA1" .. "\xDF",
-        ) {
+        for my $char (qw( ! " $ % & * + . : = ? @ ^ ` | ~ ), "\x00".."\x1F", "\x7F", "\xFF") {
             if ($charclass !~ m/\Q$char\E/xms) {
                 return e_q('q', $char, $char, $charclass);
             }
@@ -2201,22 +2652,23 @@ sub e_q {
 
     $slash = 'div';
 
-    my @char = $string =~ m/ \G ([\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) /oxmsg;
+    my @char = $string =~ m/ \G ($q_char) /oxmsg;
     for (my $i=0; $i <= $#char; $i++) {
 
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A ([\x81-\xFE]) (\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
+        # escape last octet of multiple octet
+        if ($char[$i] =~ m/\A ([\x80-\xFF].*) (\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
             $char[$i] = $1 . '\\' . $2;
         }
-        elsif (($char[$i] =~ m/\A ([\x81-\xFE]) (\\) \z/xms) and defined($char[$i+1]) and ($char[$i+1] eq '\\')) {
+        elsif (($char[$i] =~ m/\A ([\x80-\xFF].*) (\\) \z/xms) and defined($char[$i+1]) and ($char[$i+1] eq '\\')) {
             $char[$i] = $1 . '\\' . $2;
         }
     }
-    if (defined($char[-1]) and ($char[-1] =~ m/\A ([\x81-\xFE]) (\\) \z/xms)) {
+    if (defined($char[-1]) and ($char[-1] =~ m/\A ([\x80-\xFF].*) (\\) \z/xms)) {
         $char[-1] = $1 . '\\' . $2;
     }
 
-    return join '', $ope, $delimiter, @char, $end_delimiter;
+    return join '', $ope, $delimiter, @char,   $end_delimiter;
+    return join '', $ope, $delimiter, $string, $end_delimiter;
 }
 
 #
@@ -2232,21 +2684,41 @@ sub e_qq {
     # escape character
     my $left_e  = 0;
     my $right_e = 0;
-    my @char = $string =~ m/ \G (\\?(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])) /oxmsg;
+    my @char = $string =~ m{ \G (
+        \$ \s* \d+                 |
+        \$ \s* \{ \s* \d+ \s* \}   |
+        \$ \$ (?![\w\{])           |
+        \$ \s* \$ \s* $qq_variable |
+        \\?(?:$q_char)
+    )}oxmsg;
+
     for (my $i=0; $i <= $#char; $i++) {
 
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A ([\x81-\xFE]) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
+        # "\L\u" --> "\u\L"
+        if (($char[$i] eq '\L') and ($char[$i+1] eq '\u')) {
+            @char[$i,$i+1] = @char[$i+1,$i];
+        }
+
+        # "\U\l" --> "\l\U"
+        elsif (($char[$i] eq '\U') and ($char[$i+1] eq '\l')) {
+            @char[$i,$i+1] = @char[$i+1,$i];
+        }
+
+        if (0) {
+        }
+
+        # escape last octet of multiple octet
+        elsif ($char[$i] =~ m/\A ([\x80-\xFF].*) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
             $char[$i] = $1 . '\\' . $2;
         }
 
-        # \L \U \Q \E
+        # \u \l \U \L \Q \E
         elsif ($char[$i] =~ m/\A ([<>]) \z/oxms) {
             if ($right_e < $left_e) {
                 $char[$i] = '\\' . $char[$i];
             }
         }
-        elsif ($char[$i] eq '\L') {
+        elsif ($char[$i] eq '\u') {
 
             # "STRING @{[ LIST EXPR ]} MORE STRING"
             #
@@ -2255,11 +2727,19 @@ sub e_qq {
             # of ISBN 0-596-00313-7 Perl Cookbook, 2nd Edition.
             # (and so on)
 
-            $char[$i] = '@{[Egbk::lc qq<';
+            $char[$i] = '@{[Egbk::ucfirst qq<';
+            $left_e++;
+        }
+        elsif ($char[$i] eq '\l') {
+            $char[$i] = '@{[Egbk::lcfirst qq<';
             $left_e++;
         }
         elsif ($char[$i] eq '\U') {
             $char[$i] = '@{[Egbk::uc qq<';
+            $left_e++;
+        }
+        elsif ($char[$i] eq '\L') {
+            $char[$i] = '@{[Egbk::lc qq<';
             $left_e++;
         }
         elsif ($char[$i] eq '\Q') {
@@ -2275,15 +2755,67 @@ sub e_qq {
                 $char[$i] = '';
             }
         }
+        elsif ($char[$i] eq '\Q') {
+            while (1) {
+                if (++$i > $#char) {
+                    last;
+                }
+                if ($char[$i] eq '\E') {
+                    last;
+                }
+            }
+        }
+        elsif ($char[$i] eq '\E') {
+        }
+
+        # $0 --> $0
+        elsif ($char[$i] =~ m/\A \$ 0 \z/oxms) {
+        }
+        elsif ($char[$i] =~ m/\A \$ \{ \s* 0 \s* \} \z/oxms) {
+        }
+
+        # $$ --> $$
+        elsif ($char[$i] =~ m/\A \$\$ \z/oxms) {
+        }
+
+        # $1, $2, $3 --> $2, $3, $4 (only when multibyte anchoring is enable)
+        elsif ($char[$i] =~ m/\A \$ ([1-9][0-9]*) \z/oxms) {
+            $char[$i] = e_capture($1);
+        }
+        elsif ($char[$i] =~ m/\A \$ \{ \s* ([1-9][0-9]*) \s* \} \z/oxms) {
+            $char[$i] = e_capture($1);
+        }
+
+        # $$foo[ ... ] --> $ $foo->[ ... ]
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \[ (?:$qq_bracket)*? \] ) \z/oxms) {
+            $char[$i] = e_capture($1.'->'.$2);
+        }
+
+        # $$foo{ ... } --> $ $foo->{ ... }
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \{ (?:$qq_brace)*? \} ) \z/oxms) {
+            $char[$i] = e_capture($1.'->'.$2);
+        }
+
+        # $$foo
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) \z/oxms) {
+            $char[$i] = e_capture($1);
+        }
+
+        # ${ foo } --> ${ foo }
+        elsif ($char[$i] =~ m/\A \$ \s* \{ \s* [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* \s* \} \z/oxms) {
+        }
+
+        # ${ ... }
+        elsif ($char[$i] =~ m/\A \$ \s* \{ \s* ( .+ ) \s* \} \z/oxms) {
+            $char[$i] = e_capture($1);
+        }
     }
 
     # return string
     if ($left_e > $right_e) {
         return join '', $ope, $delimiter, @char, '>]}' x ($left_e - $right_e), $end_delimiter;
     }
-    else {
-        return join '', $ope, $delimiter, @char,                               $end_delimiter;
-    }
+    return     join '', $ope, $delimiter, @char,                               $end_delimiter;
 }
 
 #
@@ -2312,10 +2844,7 @@ sub e_qw {
         return join '', $ope, '<',        $string, '>';
     }
     else {
-        for my $char (
-            qw( ! " $ % & * + - . / : = ? @ ^ ` | ~ ),
-            "\xA1" .. "\xDF",
-        ) {
+        for my $char (qw( ! " $ % & * + - . / : = ? @ ^ ` | ~ ), "\x00".."\x1F", "\x7F", "\xFF") {
             if (not $octet{$char}) {
                 return join '', $ope,      $char, $string, $char;
             }
@@ -2349,26 +2878,54 @@ sub e_heredoc {
     # escape character
     my $left_e  = 0;
     my $right_e = 0;
-    my @char = $string =~ m/ \G (\\?(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])) /oxmsg;
+    my @char = $string =~ m{ \G (
+        \$ \s* \d+                 |
+        \$ \s* \{ \s* \d+ \s* \}   |
+        \$ \$ (?![\w\{])           |
+        \$ \s* \$ \s* $qq_variable |
+        \\?(?:$q_char)
+    )}oxmsg;
+
     for (my $i=0; $i <= $#char; $i++) {
 
+        # "\L\u" --> "\u\L"
+        if (($char[$i] eq '\L') and ($char[$i+1] eq '\u')) {
+            @char[$i,$i+1] = @char[$i+1,$i];
+        }
+
+        # "\U\l" --> "\l\U"
+        elsif (($char[$i] eq '\U') and ($char[$i+1] eq '\l')) {
+            @char[$i,$i+1] = @char[$i+1,$i];
+        }
+
+        if (0) {
+        }
+
         # escape character
-        if ($char[$i] =~ m/\A ([\x81-\xFE]) ($metachar) \z/oxms) {
+        elsif ($char[$i] =~ m/\A ([\x80-\xFF].*) ($metachar) \z/oxms) {
             $char[$i] = $1 . '\\' . $2;
         }
 
-        # \L \U \Q \E
+        # \u \l \U \L \Q \E
         elsif ($char[$i] =~ m/\A ([<>]) \z/oxms) {
             if ($right_e < $left_e) {
                 $char[$i] = '\\' . $char[$i];
             }
         }
-        elsif ($char[$i] eq '\L') {
-            $char[$i] = '@{[Egbk::lc qq<';
+        elsif ($char[$i] eq '\u') {
+            $char[$i] = '@{[Egbk::ucfirst qq<';
+            $left_e++;
+        }
+        elsif ($char[$i] eq '\l') {
+            $char[$i] = '@{[Egbk::lcfirst qq<';
             $left_e++;
         }
         elsif ($char[$i] eq '\U') {
             $char[$i] = '@{[Egbk::uc qq<';
+            $left_e++;
+        }
+        elsif ($char[$i] eq '\L') {
+            $char[$i] = '@{[Egbk::lc qq<';
             $left_e++;
         }
         elsif ($char[$i] eq '\Q') {
@@ -2384,23 +2941,77 @@ sub e_heredoc {
                 $char[$i] = '';
             }
         }
+        elsif ($char[$i] eq '\Q') {
+            while (1) {
+                if (++$i > $#char) {
+                    last;
+                }
+                if ($char[$i] eq '\E') {
+                    last;
+                }
+            }
+        }
+        elsif ($char[$i] eq '\E') {
+        }
+
+        # $0 --> $0
+        elsif ($char[$i] =~ m/\A \$ 0 \z/oxms) {
+        }
+        elsif ($char[$i] =~ m/\A \$ \{ \s* 0 \s* \} \z/oxms) {
+        }
+
+        # $$ --> $$
+        elsif ($char[$i] =~ m/\A \$\$ \z/oxms) {
+        }
+
+        # $1, $2, $3 --> $2, $3, $4 (only when multibyte anchoring is enable)
+        elsif ($char[$i] =~ m/\A \$ ([1-9][0-9]*) \z/oxms) {
+            $char[$i] = e_capture($1);
+        }
+        elsif ($char[$i] =~ m/\A \$ \{ \s* ([1-9][0-9]*) \s* \} \z/oxms) {
+            $char[$i] = e_capture($1);
+        }
+
+        # $$foo[ ... ] --> $ $foo->[ ... ]
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \[ (?:$qq_bracket)*? \] ) \z/oxms) {
+            $char[$i] = e_capture($1.'->'.$2);
+        }
+
+        # $$foo{ ... } --> $ $foo->{ ... }
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \{ (?:$qq_brace)*? \} ) \z/oxms) {
+            $char[$i] = e_capture($1.'->'.$2);
+        }
+
+        # $$foo
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) \z/oxms) {
+            $char[$i] = e_capture($1);
+        }
+
+        # ${ foo } --> ${ foo }
+        elsif ($char[$i] =~ m/\A \$ \s* \{ \s* [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* \s* \} \z/oxms) {
+        }
+
+        # ${ ... }
+        elsif ($char[$i] =~ m/\A \$ \s* \{ \s* ( .+ ) \s* \} \z/oxms) {
+            $char[$i] = e_capture($1);
+        }
     }
 
     # return string
     if ($left_e > $right_e) {
         return join '', @char, '>]}' x ($left_e - $right_e);
     }
-    else {
-        return join '', @char;
-    }
+    return     join '', @char;
 }
 
 #
-# escape regexp (m//)
+# escape regexp (m//, qr//)
 #
-sub e_m {
+sub e_qr {
     my($ope,$delimiter,$end_delimiter,$string,$modifier) = @_;
     $modifier ||= '';
+
+    my $ignorecase = ($modifier =~ m/i/oxms) ? 1 : 0;
 
     $slash = 'div';
 
@@ -2408,53 +3019,108 @@ sub e_m {
 
     # split regexp
     my @char = $string =~ m{\G(
-        \\  [0-7]{2,3}       |
-        \\x [0-9A-Fa-f]{1,2} |
-        \\c [\x40-\x5F]      |
-        \\  (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) |
-        [\$\@] $qq_variable  |
-        \[\:\^ [a-z]+ \:\]   |
-        \[\:   [a-z]+ \:\]   |
-        \[\^                 |
-            (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])
+        \\  [0-7]{2,3}             |
+        \\x [0-9A-Fa-f]{1,2}       |
+        \\c [\x40-\x5F]            |
+        \\  (?:$q_char)            |
+        [\$\@] $qq_variable        |
+        \$ \s* \d+                 |
+        \$ \s* \{ \s* \d+ \s* \}   |
+        \$ \$ (?![\w\{])           |
+        \$ \s* \$ \s* $qq_variable |
+        \[\:\^ [a-z]+ \:\]         |
+        \[\:   [a-z]+ \:\]         |
+        \[\^                       |
+        \(\?                       |
+            (?:$q_char)
     )}oxmsg;
+
+    # choice again delimiter
+    if ($delimiter =~ m/ [\@:] /oxms) {
+        my %octet = map {$_ => 1} @char;
+        if (not $octet{')'}) {
+            $delimiter     = '(';
+            $end_delimiter = ')';
+        }
+        elsif (not $octet{'}'}) {
+            $delimiter     = '{';
+            $end_delimiter = '}';
+        }
+        elsif (not $octet{']'}) {
+            $delimiter     = '[';
+            $end_delimiter = ']';
+        }
+        elsif (not $octet{'>'}) {
+            $delimiter     = '<';
+            $end_delimiter = '>';
+        }
+        else {
+            for my $char (qw( ! " $ % & * + - . / = ? ^ ` | ~ ), "\x00".."\x1F", "\x7F", "\xFF") {
+                if (not $octet{$char}) {
+                    $delimiter     = $char;
+                    $end_delimiter = $char;
+                    last;
+                }
+            }
+        }
+    }
 
     # unescape character
     my $left_e  = 0;
     my $right_e = 0;
     for (my $i=0; $i <= $#char; $i++) {
 
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A \\? ([\x81-\xFE]) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
+        # "\L\u" --> "\u\L"
+        if (($char[$i] eq '\L') and ($char[$i+1] eq '\u')) {
+            @char[$i,$i+1] = @char[$i+1,$i];
+        }
+
+        # "\U\l" --> "\l\U"
+        elsif (($char[$i] eq '\U') and ($char[$i+1] eq '\l')) {
+            @char[$i,$i+1] = @char[$i+1,$i];
+        }
+
+        if (0) {
+        }
+
+        # escape last octet of multiple octet
+        elsif ($char[$i] =~ m/\A \\? ([\x80-\xFF].*) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
             $char[$i] = $1 . '\\' . $2;
         }
 
-        # join separated double octet
-        elsif ($char[$i] =~ m/\A \\ (?:2[0-7][1-7]|3[0-7][0-6]) \z/oxms) {
-            if ($i < $#char) {
-                $char[$i] .= $char[$i+1];
-                splice @char, $i+1, 1;
+        # join separated multiple octet
+        elsif ($char[$i] =~ m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms) {
+            if (   ($i+3 <= $#char) and (grep(m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms, @char[$i+1..$i+3]) == 3) and (eval(sprintf '"%s%s%s%s"', @char[$i..$i+3]) =~ m/\A $q_char \z/oxms)) {
+                $char[$i] .= join '', splice @char, $i+1, 3;
             }
-        }
-        elsif ($char[$i] =~ m/\A \\x (?:8[1-9A-Fa-f]|[9A-Ea-e][0-9A-Fa-f]|[Ff][0-9A-Ea-e]) \z/oxms) {
-            if ($i < $#char) {
-                $char[$i] .= $char[$i+1];
-                splice @char, $i+1, 1;
+            elsif (($i+2 <= $#char) and (grep(m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms, @char[$i+1..$i+2]) == 2) and (eval(sprintf '"%s%s%s"',   @char[$i..$i+2]) =~ m/\A $q_char \z/oxms)) {
+                $char[$i] .= join '', splice @char, $i+1, 2;
+            }
+            elsif (($i+1 <= $#char) and (grep(m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms, $char[$i+1      ]) == 1) and (eval(sprintf '"%s%s"',     @char[$i..$i+1]) =~ m/\A $q_char \z/oxms)) {
+                $char[$i] .= join '', splice @char, $i+1, 1;
             }
         }
 
         # open character class [...]
         elsif ($char[$i] eq '[') {
             my $left = $i;
+
+            # [] make die "unmatched [] in regexp ..."
+            # (and so on)
+
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
+
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [...]
-                    splice @char, $left, $right-$left+1, charlist_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -2465,15 +3131,23 @@ sub e_m {
         # open character class [^...]
         elsif ($char[$i] eq '[^') {
             my $left = $i;
+
+            # [^] make die "unmatched [] in regexp ..."
+            # (and so on)
+
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
+
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [^...]
-                    splice @char, $left, $right-$left+1, charlist_not_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_not_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -2482,40 +3156,37 @@ sub e_m {
         }
 
         # rewrite character class or escape character
-        elsif (my $char = {
-            '.'  => ($modifier =~ /s/) ?
-                    '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])' :
-                    '(?:[\x81-\xFE][\x00-\xFF]|[^\n])',
-            '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-            '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-            '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-            '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-            '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$char[$i]}
-        ) {
+        elsif (my $char = classic_character_class($char[$i],$modifier)) {
             $char[$i] = $char;
         }
 
         # /i modifier
-        elsif ($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '[' . CORE::uc($c) . CORE::lc($c) . ']';
+        elsif ($char[$i] =~ m/\A [A-Za-z] \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '[' . CORE::uc($char[$i]) . CORE::lc($char[$i]) . ']';
             }
         }
 
-        # \L \U \Q \E
-        elsif ($char[$i] =~ m/\A ([<>]) \z/oxms) {
+        # \u \l \U \L \Q \E
+        elsif ($char[$i] =~ m/\A [<>] \z/oxms) {
             if ($right_e < $left_e) {
                 $char[$i] = '\\' . $char[$i];
             }
         }
-        elsif ($char[$i] eq '\L') {
-            $char[$i] = '@{[Egbk::lc qq<';
+        elsif ($char[$i] eq '\u') {
+            $char[$i] = '@{[Egbk::ucfirst qq<';
+            $left_e++;
+        }
+        elsif ($char[$i] eq '\l') {
+            $char[$i] = '@{[Egbk::lcfirst qq<';
             $left_e++;
         }
         elsif ($char[$i] eq '\U') {
             $char[$i] = '@{[Egbk::uc qq<';
+            $left_e++;
+        }
+        elsif ($char[$i] eq '\L') {
+            $char[$i] = '@{[Egbk::lc qq<';
             $left_e++;
         }
         elsif ($char[$i] eq '\Q') {
@@ -2531,56 +3202,124 @@ sub e_m {
                 $char[$i] = '';
             }
         }
-
-        # $scalar or @array
-        elsif ($char[$i] =~ m/\A [\$\@].+ /oxms) {
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '@{[Egbk::ignorecase(' . e_string($char[$i]) . ')]}';
+        elsif ($char[$i] eq '\Q') {
+            while (1) {
+                if (++$i > $#char) {
+                    last;
+                }
+                if ($char[$i] eq '\E') {
+                    last;
+                }
             }
-            else {
-                $char[$i] =                           e_string($char[$i]);
+        }
+        elsif ($char[$i] eq '\E') {
+        }
+
+        # $0 --> $0
+        elsif ($char[$i] =~ m/\A \$ 0 \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+        elsif ($char[$i] =~ m/\A \$ \{ \s* 0 \s* \} \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
             }
         }
 
-        # quote double octet character before ? + * {
-        elsif (
-            ($i >= 1) and
-            ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms) and
-            ($char[$i-1] =~ m/\A 
-                (?:
-                        [\x81-\xFE] | 
-                    \\  (?:2[0-7][1-7]|3[0-7][0-6]) |
-                    \\x (?:8[1-9A-Fa-f]|[9A-Ea-e][0-9A-Fa-f]|[Ff][0-9A-Ea-e])
-                )
-                (?:
-                        [\x00-\xFF] |
-                    \\  [0-7]{2,3} |
-                    \\x [0-9-A-Fa-f]{1,2}
-                )
-             \z/oxms)
-        ) {
-            $char[$i-1] = '(?:' . $char[$i-1] . ')';
+        # $$ --> $$
+        elsif ($char[$i] =~ m/\A \$\$ \z/oxms) {
+        }
+
+        # $1, $2, $3 --> $2, $3, $4 (only when multibyte anchoring is enable)
+        elsif ($char[$i] =~ m/\A \$ ([1-9][0-9]*) \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+        elsif ($char[$i] =~ m/\A \$ \{ \s* ([1-9][0-9]*) \s* \} \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $$foo[ ... ] --> $ $foo->[ ... ]
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \[ (?:$qq_bracket)*? \] ) \z/oxms) {
+            $char[$i] = e_capture($1.'->'.$2);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $$foo{ ... } --> $ $foo->{ ... }
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \{ (?:$qq_brace)*? \} ) \z/oxms) {
+            $char[$i] = e_capture($1.'->'.$2);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $$foo
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # ${ foo }
+        elsif ($char[$i] =~ m/\A \$ \s* \{ ( \s* [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* \s* ) \} \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # ${ ... }
+        elsif ($char[$i] =~ m/\A \$ \s* \{ \s* ( .+ ) \s* \} \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $scalar or @array
+        elsif ($char[$i] =~ m/\A [\$\@].+ /oxms) {
+            $char[$i] = e_string($char[$i]);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # quote character before ? + * {
+        elsif (($i >= 1) and ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms)) {
+            if (CORE::length($char[$i-1]) == 1) {
+            }
+            elsif ($char[$i-1] =~ m/\A (?:\\[0-7]{2,3}|\\x[0-9-A-Fa-f]{1,2}) \z/oxms) {
+            }
+            else {
+                $char[$i-1] = '(?:' . $char[$i-1] . ')';
+            }
         }
     }
 
     # make regexp string
-    my $re;
     $modifier =~ tr/i//d;
     if ($left_e > $right_e) {
-        $re = join '', $ope, $delimiter, $your_gap, @char, '>]}' x ($left_e - $right_e), $end_delimiter, $modifier;
+        return join '', $ope, $delimiter, "$your_gap(?:", @char, '>]}' x ($left_e - $right_e), ')', $m_matched, $end_delimiter, $modifier;
     }
-    else {
-        $re = join '', $ope, $delimiter, $your_gap, @char,                               $end_delimiter, $modifier;
-    }
-    return $re;
+    return     join '', $ope, $delimiter, "$your_gap(?:", @char,                               ')', $m_matched, $end_delimiter, $modifier;
 }
 
 #
-# escape regexp (m'')
+# escape regexp (m'', qr'')
 #
-sub e_m_q {
+sub e_qr_q {
     my($ope,$delimiter,$end_delimiter,$string,$modifier) = @_;
     $modifier ||= '';
+
+    my $ignorecase = ($modifier =~ m/i/oxms) ? 1 : 0;
 
     $slash = 'div';
 
@@ -2589,29 +3328,35 @@ sub e_m_q {
         \[\:\^ [a-z]+ \:\] |
         \[\:   [a-z]+ \:\] |
         \[\^               |
-        \\?    (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])
+        [\$\@/\\]          |
+        \\?    (?:$q_char)
     )}oxmsg;
 
     # unescape character
     for (my $i=0; $i <= $#char; $i++) {
+        if (0) {
+        }
 
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A ([\x81-\xFE]) ([\\|\[\{\^]|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
+        # escape last octet of multiple octet
+        elsif ($char[$i] =~ m/\A ([\x80-\xFF].*) ([\\|\[\{\^]|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
             $char[$i] = $1 . '\\' . $2;
         }
 
         # open character class [...]
         elsif ($char[$i] eq '[') {
             my $left = $i;
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [...]
-                    splice @char, $left, $right-$left+1, charlist_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -2622,15 +3367,18 @@ sub e_m_q {
         # open character class [^...]
         elsif ($char[$i] eq '[^') {
             my $left = $i;
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [^...]
-                    splice @char, $left, $right-$left+1, charlist_not_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_not_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -2638,41 +3386,37 @@ sub e_m_q {
             }
         }
 
+        # escape $ @ / and \
+        elsif ($char[$i] =~ m{\A [\$\@/\\] \z}oxms) {
+            $char[$i] = '\\' . $char[$i];
+        }
+
         # rewrite character class or escape character
-        elsif (my $char = {
-            '.'  => ($modifier =~ /s/) ?
-                    '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])' :
-                    '(?:[\x81-\xFE][\x00-\xFF]|[^\n])',
-            '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-            '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-            '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-            '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-            '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$char[$i]}
-        ) {
+        elsif (my $char = classic_character_class($char[$i],$modifier)) {
             $char[$i] = $char;
         }
 
         # /i modifier
-        elsif ($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '[' . CORE::uc($c) . CORE::lc($c) . ']';
+        elsif ($char[$i] =~ m/\A [A-Za-z] \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '[' . CORE::uc($char[$i]) . CORE::lc($char[$i]) . ']';
             }
         }
 
-        # quote double octet character before ? + * {
-        elsif (
-            ($i >= 1) and
-            ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms) and
-            ($char[$i-1] =~ m/\A [\x81-\xFE] \\? [\x00-\xFF] \z/oxms)
-        ) {
-            $char[$i-1] = '(?:' . $char[$i-1] . ')';
+        # quote character before ? + * {
+        elsif (($i >= 1) and ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms)) {
+            if (CORE::length($char[$i-1]) == 1) {
+            }
+            else {
+                $char[$i-1] = '(?:' . $char[$i-1] . ')';
+            }
         }
     }
 
     $modifier =~ tr/i//d;
-    return join '', $ope, $delimiter, $your_gap, @char, $end_delimiter, $modifier;
+    $delimiter     = '/';
+    $end_delimiter = '/';
+    return join '', $ope, $delimiter, "$your_gap(?:", @char, ')', $m_matched, $end_delimiter, $modifier;
 }
 
 #
@@ -2682,82 +3426,118 @@ sub e_s1 {
     my($ope,$delimiter,$end_delimiter,$string,$modifier) = @_;
     $modifier ||= '';
 
+    my $ignorecase = ($modifier =~ m/i/oxms) ? 1 : 0;
+
     $slash = 'div';
 
     my $metachar = qr/[\@\\|[\]{^]/oxms;
 
     # split regexp
     my @char = $string =~ m{\G(
-        \\  [0-7]{1,3}       |
-        \\x [0-9A-Fa-f]{1,2} |
-        \\c [\x40-\x5F]      |
-        \\  (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) |
-        [\$\@] $qq_variable  |
-        \[\:\^ [a-z]+ \:\]   |
-        \[\:   [a-z]+ \:\]   |
-        \[\^                 |
-            (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])
+        \\g \s* \{ \s* - \s* [1-9][0-9]* \s* \} |
+        \\g \s* \{ \s*       [1-9][0-9]* \s* \} |
+        \\g \s*              [1-9][0-9]*        |
+        \\                   [1-9][0-9]*        |
+        \\  [0-7]{2,3}                          |
+        \\x [0-9A-Fa-f]{1,2}                    |
+        \\c [\x40-\x5F]                         |
+        \\  (?:$q_char)                         |
+        [\$\@] $qq_variable                     |
+        \$ \s* \d+                              |
+        \$ \s* \{ \s* \d+ \s* \}                |
+        \$ \$ (?![\w\{])                        |
+        \$ \s* \$ \s* $qq_variable              |
+        \[\:\^ [a-z]+ \:\]                      |
+        \[\:   [a-z]+ \:\]                      |
+        \[\^                                    |
+        \(\?                                    |
+            (?:$q_char)
     )}oxmsg;
+
+    # choice again delimiter
+    if ($delimiter =~ m/ [\@:] /oxms) {
+        my %octet = map {$_ => 1} @char;
+        if (not $octet{')'}) {
+            $delimiter     = '(';
+            $end_delimiter = ')';
+        }
+        elsif (not $octet{'}'}) {
+            $delimiter     = '{';
+            $end_delimiter = '}';
+        }
+        elsif (not $octet{']'}) {
+            $delimiter     = '[';
+            $end_delimiter = ']';
+        }
+        elsif (not $octet{'>'}) {
+            $delimiter     = '<';
+            $end_delimiter = '>';
+        }
+        else {
+            for my $char (qw( ! " $ % & * + - . / = ? ^ ` | ~ ), "\x00".."\x1F", "\x7F", "\xFF") {
+                if (not $octet{$char}) {
+                    $delimiter     = $char;
+                    $end_delimiter = $char;
+                    last;
+                }
+            }
+        }
+    }
+
+    # count '('
+    my $parens = grep { $_ eq '(' } @char;
 
     # unescape character
     my $left_e  = 0;
     my $right_e = 0;
     for (my $i=0; $i <= $#char; $i++) {
 
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A \\? ([\x81-\xFE]) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
+        # "\L\u" --> "\u\L"
+        if (($char[$i] eq '\L') and ($char[$i+1] eq '\u')) {
+            @char[$i,$i+1] = @char[$i+1,$i];
+        }
+
+        # "\U\l" --> "\l\U"
+        elsif (($char[$i] eq '\U') and ($char[$i+1] eq '\l')) {
+            @char[$i,$i+1] = @char[$i+1,$i];
+        }
+
+        if (0) {
+        }
+
+        # escape last octet of multiple octet
+        elsif ($char[$i] =~ m/\A \\? ([\x80-\xFF].*) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
             $char[$i] = $1 . '\\' . $2;
         }
 
-#
-# your script:                             \1        \2        \3
-#                s/                       (aaa) BBB (ccc) DDD (eee) /   ...   /;
-#                                           :         :         :
-# escaped script:              \1          \2        \3        \4
-#                s/ \G ((?:$your_char)*?) (aaa) BBB (ccc) DDD (eee) /${1} ... /;
-#                                           :         :         :
-# but matched variables are:               $1        $2        $3
-#
-# (and so on)
-#
-
-        # rewrite \1,\2,\3 ... --> \2,\3,\4 ...
-        elsif ($char[$i] =~ m/\A (\\) ((\d)\d*) \z/oxms) {
-            if (($3 eq '0') or ($2 >= 40)) {
-
-                # join separated double octet
-                if ($char[$i] =~ m/\A \\ (?:2[0-7][1-7]|3[0-7][0-6]) \z/oxms) {
-                    if ($i < $#char) {
-                        $char[$i] .= $char[$i+1];
-                        splice @char, $i+1, 1;
-                    }
-                }
+        # join separated multiple octet
+        elsif ($char[$i] =~ m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms) {
+            if (   ($i+3 <= $#char) and (grep(m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms, @char[$i+1..$i+3]) == 3) and (eval(sprintf '"%s%s%s%s"', @char[$i..$i+3]) =~ m/\A $q_char \z/oxms)) {
+                $char[$i] .= join '', splice @char, $i+1, 3;
             }
-            else {
-                $char[$i] = $1 . ($2 + 1);
+            elsif (($i+2 <= $#char) and (grep(m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms, @char[$i+1..$i+2]) == 2) and (eval(sprintf '"%s%s%s"',   @char[$i..$i+2]) =~ m/\A $q_char \z/oxms)) {
+                $char[$i] .= join '', splice @char, $i+1, 2;
             }
-        }
-
-        # join separated double octet
-        elsif ($char[$i] =~ m/\A \\x (?:8[1-9A-Fa-f]|[9A-Ea-e][0-9A-Fa-f]|[Ff][0-9A-Ea-e]) \z/oxms) {
-            if ($i < $#char) {
-                $char[$i] .= $char[$i+1];
-                splice @char, $i+1, 1;
+            elsif (($i+1 <= $#char) and (grep(m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms, $char[$i+1      ]) == 1) and (eval(sprintf '"%s%s"',     @char[$i..$i+1]) =~ m/\A $q_char \z/oxms)) {
+                $char[$i] .= join '', splice @char, $i+1, 1;
             }
         }
 
         # open character class [...]
         elsif ($char[$i] eq '[') {
             my $left = $i;
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [...]
-                    splice @char, $left, $right-$left+1, charlist_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -2768,15 +3548,18 @@ sub e_s1 {
         # open character class [^...]
         elsif ($char[$i] eq '[^') {
             my $left = $i;
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [^...]
-                    splice @char, $left, $right-$left+1, charlist_not_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_not_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -2785,40 +3568,37 @@ sub e_s1 {
         }
 
         # rewrite character class or escape character
-        elsif (my $char = {
-            '.'  => ($modifier =~ /s/) ?
-                    '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])' :
-                    '(?:[\x81-\xFE][\x00-\xFF]|[^\n])',
-            '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-            '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-            '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-            '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-            '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$char[$i]}
-        ) {
+        elsif (my $char = classic_character_class($char[$i],$modifier)) {
             $char[$i] = $char;
         }
 
         # /i modifier
-        elsif ($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '[' . CORE::uc($c) . CORE::lc($c) . ']';
+        elsif ($char[$i] =~ m/\A [A-Za-z] \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '[' . CORE::uc($char[$i]) . CORE::lc($char[$i]) . ']';
             }
         }
 
-        # \L \U \Q \E
-        elsif ($char[$i] =~ m/\A ([<>]) \z/oxms) {
+        # \u \l \U \L \Q \E
+        elsif ($char[$i] =~ m/\A [<>] \z/oxms) {
             if ($right_e < $left_e) {
                 $char[$i] = '\\' . $char[$i];
             }
         }
-        elsif ($char[$i] eq '\L') {
-            $char[$i] = '@{[Egbk::lc qq<';
+        elsif ($char[$i] eq '\u') {
+            $char[$i] = '@{[Egbk::ucfirst qq<';
+            $left_e++;
+        }
+        elsif ($char[$i] eq '\l') {
+            $char[$i] = '@{[Egbk::lcfirst qq<';
             $left_e++;
         }
         elsif ($char[$i] eq '\U') {
             $char[$i] = '@{[Egbk::uc qq<';
+            $left_e++;
+        }
+        elsif ($char[$i] eq '\L') {
+            $char[$i] = '@{[Egbk::lc qq<';
             $left_e++;
         }
         elsif ($char[$i] eq '\Q') {
@@ -2834,242 +3614,151 @@ sub e_s1 {
                 $char[$i] = '';
             }
         }
-
-        # $scalar or @array
-        elsif ($char[$i] =~ m/\A [\$\@].+ /oxms) {
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '@{[Egbk::ignorecase(' . e_string($char[$i]) . ')]}';
-            }
-            else {
-                $char[$i] =                           e_string($char[$i]);
-            }
-        }
-
-        # quote double octet character before ? + * {
-        elsif (
-            ($i >= 1) and
-            ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms) and
-            ($char[$i-1] =~ m/\A 
-                (?:
-                        [\x81-\xFE] | 
-                    \\  (?:2[0-7][1-7]|3[0-7][0-6]) |
-                    \\x (?:8[1-9A-Fa-f]|[9A-Ea-e][0-9A-Fa-f]|[Ff][0-9A-Ea-e])
-                )
-                (?:
-                        [\x00-\xFF] |
-                    \\  [0-7]{2,3} |
-                    \\x [0-9-A-Fa-f]{1,2}
-                )
-             \z/oxms)
-        ) {
-            $char[$i-1] = '(?:' . $char[$i-1] . ')';
-        }
-    }
-
-    # make regexp string
-    my $re;
-    if ($left_e > $right_e) {
-        $re = join '', $ope, $delimiter, qq{\\G((?:$your_char)*?)}, @char, '>]}' x ($left_e - $right_e), $end_delimiter;
-    }
-    else {
-        $re = join '', $ope, $delimiter, qq{\\G((?:$your_char)*?)}, @char,                               $end_delimiter;
-    }
-    return $re;
-}
-
-#
-# escape regexp (s$here$$)
-#
-sub e_s1_dol {
-    my($ope,$delimiter,$end_delimiter,$string,$modifier) = @_;
-    $modifier ||= '';
-
-    $slash = 'div';
-
-    my $metachar = qr/[\@\\|[\]{^]/oxms;
-
-    # split regexp
-    my @char = $string =~ m{\G(
-        \\  [0-7]{1,3}       |
-        \\x [0-9A-Fa-f]{1,2} |
-        \\c [\x40-\x5F]      |
-        \\  (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) |
-        [\$\@] $qq_variable  |
-        \[\:\^ [a-z]+ \:\]   |
-        \[\:   [a-z]+ \:\]   |
-        \[\^                 |
-            (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])
-    )}oxmsg;
-
-    # unescape character
-    my $left_e  = 0;
-    my $right_e = 0;
-    for (my $i=0; $i <= $#char; $i++) {
-
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A \\? ([\x81-\xFE]) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
-            $char[$i] = $1 . '\\' . $2;
-        }
-
-        # escape single octet
-        elsif ($char[$i] =~ m/\A (\Q$end_delimiter\E) \z/xms) {
-            $char[$i] = '\\' . $1;
-        }
-
-        # rewrite \1,\2,\3 ... --> \2,\3,\4 ...
-        elsif ($char[$i] =~ m/\A (\\) ((\d)\d*) \z/oxms) {
-            if (($3 eq '0') or ($2 >= 40)) {
-
-                # join separated double octet
-                if ($char[$i] =~ m/\A \\ (?:2[0-7][1-7]|3[0-7][0-6]) \z/oxms) {
-                    if ($i < $#char) {
-                        $char[$i] .= $char[$i+1];
-                        splice @char, $i+1, 1;
-                    }
-                }
-            }
-            else {
-                $char[$i] = $1 . ($2 + 1);
-            }
-        }
-
-        # join separated double octet
-        elsif ($char[$i] =~ m/\A \\x (?:8[1-9A-Fa-f]|[9A-Ea-e][0-9A-Fa-f]|[Ff][0-9A-Ea-e]) \z/oxms) {
-            if ($i < $#char) {
-                $char[$i] .= $char[$i+1];
-                splice @char, $i+1, 1;
-            }
-        }
-
-        # open character class [...]
-        elsif ($char[$i] eq '[') {
-            my $left = $i;
-            while (1) {
-                if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
-                }
-                if ($char[$i] eq ']') {
-                    my $right = $i;
-
-                    # [...]
-                    splice @char, $left, $right-$left+1, charlist_qr(@char[$left+1..$right-1], $modifier);
-
-                    $i = $left;
-                    last;
-                }
-            }
-        }
-
-        # open character class [^...]
-        elsif ($char[$i] eq '[^') {
-            my $left = $i;
-            while (1) {
-                if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
-                }
-                if ($char[$i] eq ']') {
-                    my $right = $i;
-
-                    # [^...]
-                    splice @char, $left, $right-$left+1, charlist_not_qr(@char[$left+1..$right-1], $modifier);
-
-                    $i = $left;
-                    last;
-                }
-            }
-        }
-
-        # rewrite character class or escape character
-        elsif (my $char = {
-            '.'  => ($modifier =~ /s/) ?
-                    '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])' :
-                    '(?:[\x81-\xFE][\x00-\xFF]|[^\n])',
-            '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-            '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-            '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-            '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-            '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$char[$i]}
-        ) {
-            $char[$i] = $char;
-        }
-
-        # /i modifier
-        elsif ($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '[' . CORE::uc($c) . CORE::lc($c) . ']';
-            }
-        }
-
-        # \L \U \Q \E
-        elsif ($char[$i] =~ m/\A ([<>]) \z/oxms) {
-            if ($right_e < $left_e) {
-                $char[$i] = '\\' . $char[$i];
-            }
-        }
-        elsif ($char[$i] eq '\L') {
-            $char[$i] = '@{[Egbk::lc qq<';
-            $left_e++;
-        }
-        elsif ($char[$i] eq '\U') {
-            $char[$i] = '@{[Egbk::uc qq<';
-            $left_e++;
-        }
         elsif ($char[$i] eq '\Q') {
-            $char[$i] = '@{[CORE::quotemeta qq<';
-            $left_e++;
+            while (1) {
+                if (++$i > $#char) {
+                    last;
+                }
+                if ($char[$i] eq '\E') {
+                    last;
+                }
+            }
         }
         elsif ($char[$i] eq '\E') {
-            if ($right_e < $left_e) {
-                $char[$i] = '>]}';
-                $right_e++;
+        }
+
+        # \0 --> \0
+        elsif ($char[$i] =~ m/\A \\ \s* 0 \z/oxms) {
+        }
+
+        # \g{N}, \g{-N}
+        #
+        # P.108 Using Simple Patterns
+        # in Chapter 7: In the World of Regular Expressions
+        # of ISBN 978-0-596-52010-6 Learning Perl, Fifth Edition
+
+        # \g{-1}, \g{-2}, \g{-3} --> \g{-1}, \g{-2}, \g{-3}
+        elsif ($char[$i] =~ m/\A \\g \s* \{ \s* - \s* ([1-9][0-9]*) \s* \} \z/oxms) {
+        }
+
+        # \g{1}, \g{2}, \g{3} --> \g{2}, \g{3}, \g{4} (only when multibyte anchoring is enable)
+        elsif ($char[$i] =~ m/\A \\g \s* \{ \s* ([1-9][0-9]*) \s* \} \z/oxms) {
+            if ($1 <= $parens) {
+                $char[$i] = '\\g{' . ($1 + 1) . '}';
             }
-            else {
-                $char[$i] = '';
+        }
+
+        # \g1, \g2, \g3 --> \g2, \g3, \g4 (only when multibyte anchoring is enable)
+        elsif ($char[$i] =~ m/\A \\g \s* ([1-9][0-9]*) \z/oxms) {
+            if ($1 <= $parens) {
+                $char[$i] = '\\g' . ($1 + 1);
+            }
+        }
+
+        # \1, \2, \3 --> \2, \3, \4 (only when multibyte anchoring is enable)
+        elsif ($char[$i] =~ m/\A \\ \s* ([1-9][0-9]*) \z/oxms) {
+            if ($1 <= $parens) {
+                $char[$i] = '\\' . ($1 + 1);
+            }
+        }
+
+        # $0 --> $0
+        elsif ($char[$i] =~ m/\A \$ 0 \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+        elsif ($char[$i] =~ m/\A \$ \{ \s* 0 \s* \} \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $$ --> $$
+        elsif ($char[$i] =~ m/\A \$\$ \z/oxms) {
+        }
+
+        # $1, $2, $3 --> $2, $3, $4 (only when multibyte anchoring is enable)
+        elsif ($char[$i] =~ m/\A \$ ([1-9][0-9]*) \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+        elsif ($char[$i] =~ m/\A \$ \{ \s* ([1-9][0-9]*) \s* \} \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $$foo[ ... ] --> $ $foo->[ ... ]
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \[ (?:$qq_bracket)*? \] ) \z/oxms) {
+            $char[$i] = e_capture($1.'->'.$2);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $$foo{ ... } --> $ $foo->{ ... }
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \{ (?:$qq_brace)*? \} ) \z/oxms) {
+            $char[$i] = e_capture($1.'->'.$2);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $$foo
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # ${ foo }
+        elsif ($char[$i] =~ m/\A \$ \s* \{ ( \s* [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* \s* ) \} \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # ${ ... }
+        elsif ($char[$i] =~ m/\A \$ \s* \{ \s* ( .+ ) \s* \} \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
             }
         }
 
         # $scalar or @array
         elsif ($char[$i] =~ m/\A [\$\@].+ /oxms) {
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '@{[Egbk::ignorecase(' . e_string($char[$i]) . ')]}';
-            }
-            else {
-                $char[$i] =                           e_string($char[$i]);
+            $char[$i] = e_string($char[$i]);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
             }
         }
 
-        # quote double octet character before ? + * {
-        elsif (
-            ($i >= 1) and
-            ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms) and
-            ($char[$i-1] =~ m/\A 
-                (?:
-                        [\x81-\xFE] | 
-                    \\  (?:2[0-7][1-7]|3[0-7][0-6]) |
-                    \\x (?:8[1-9A-Fa-f]|[9A-Ea-e][0-9A-Fa-f]|[Ff][0-9A-Ea-e])
-                )
-                (?:
-                        [\x00-\xFF] |
-                    \\  [0-7]{2,3} |
-                    \\x [0-9-A-Fa-f]{1,2}
-                )
-             \z/oxms)
-        ) {
-            $char[$i-1] = '(?:' . $char[$i-1] . ')';
+        # quote character before ? + * {
+        elsif (($i >= 1) and ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms)) {
+            if (CORE::length($char[$i-1]) == 1) {
+            }
+            elsif ($char[$i-1] =~ m/\A (?:\\[0-7]{2,3}|\\x[0-9-A-Fa-f]{1,2}) \z/oxms) {
+            }
+            else {
+                $char[$i-1] = '(?:' . $char[$i-1] . ')';
+            }
         }
     }
 
     # make regexp string
-    my $re;
+    my $capture_your_gap = '';
+    $capture_your_gap = "($your_gap)";
+    $modifier =~ tr/i//d;
     if ($left_e > $right_e) {
-        $re = join '', $ope, $delimiter, qq{\\G((?:$your_char)*?)}, @char, '>]}' x ($left_e - $right_e), $end_delimiter;
+        return join '', $ope, $delimiter, $capture_your_gap, '(?:', @char, '>]}' x ($left_e - $right_e), ')', $s_matched, $end_delimiter, $modifier;
     }
-    else {
-        $re = join '', $ope, $delimiter, qq{\\G((?:$your_char)*?)}, @char,                               $end_delimiter;
-    }
-    return $re;
+    return     join '', $ope, $delimiter, $capture_your_gap, '(?:', @char,                               ')', $s_matched, $end_delimiter, $modifier;
 }
 
 #
@@ -3079,52 +3768,44 @@ sub e_s1_q {
     my($ope,$delimiter,$end_delimiter,$string,$modifier) = @_;
     $modifier ||= '';
 
+    my $ignorecase = ($modifier =~ m/i/oxms) ? 1 : 0;
+
     $slash = 'div';
 
     # split regexp
     my @char = $string =~ m{\G(
-        \\  [0-7]{1,3}     |
         \[\:\^ [a-z]+ \:\] |
         \[\:   [a-z]+ \:\] |
         \[\^               |
-        \\?    (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])
+        [\$\@/\\]          |
+        \\?    (?:$q_char)
     )}oxmsg;
 
     # unescape character
     for (my $i=0; $i <= $#char; $i++) {
+        if (0) {
+        }
 
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A ([\x81-\xFE]) ([\\|\[\{\^]|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
+        # escape last octet of multiple octet
+        elsif ($char[$i] =~ m/\A ([\x80-\xFF].*) ([\\|\[\{\^]|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
             $char[$i] = $1 . '\\' . $2;
-        }
-
-        # rewrite \1,\2,\3 ... --> \2,\3,\4 ...
-        elsif ($char[$i] =~ m/\A (\\) ((\d)\d*) \z/oxms) {
-            if (($3 eq '0') or ($2 >= 40)) {
-                $char[$i] = '\\' . $1 . $2;
-            }
-            else {
-                $char[$i] = $1 . ($2 + 1);
-            }
-        }
-
-        # escape single octet
-        elsif ($char[$i] =~ m/\A (\\|\$|\@|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
-            $char[$i] = '\\' . $1;
         }
 
         # open character class [...]
         elsif ($char[$i] eq '[') {
             my $left = $i;
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [...]
-                    splice @char, $left, $right-$left+1, charlist_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -3135,15 +3816,18 @@ sub e_s1_q {
         # open character class [^...]
         elsif ($char[$i] eq '[^') {
             my $left = $i;
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [^...]
-                    splice @char, $left, $right-$left+1, charlist_not_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_not_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -3151,539 +3835,294 @@ sub e_s1_q {
             }
         }
 
-        # rewrite character class or escape character
-        elsif (my $char = {
-            '.'  => ($modifier =~ /s/) ?
-                    '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])' :
-                    '(?:[\x81-\xFE][\x00-\xFF]|[^\n])',
-            '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-            '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-            '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-            '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-            '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$char[$i]}
-        ) {
-            $char[$i] = $char;
-        }
-
-        # /i modifier
-        elsif ($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '[' . CORE::uc($c) . CORE::lc($c) . ']';
-            }
-        }
-
-        # quote double octet character before ? + * {
-        elsif (
-            ($i >= 1) and
-            ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms) and
-            ($char[$i-1] =~ m/\A [\x81-\xFE] \\? [\x00-\xFF] \z/oxms)
-        ) {
-            $char[$i-1] = '(?:' . $char[$i-1] . ')';
-        }
-    }
-    return join '', $ope, $delimiter, qq{\\G((?:$your_char)*?)}, @char, $end_delimiter;
-}
-
-#
-# escape string (s//here/)
-#
-sub e_s2 {
-    my($delimiter,$end_delimiter,$string,$modifier) = @_;
-    $modifier ||= '';
-
-    $slash = 'div';
-
-    my $metachar = qr/[\@\\]/oxms;
-
-    # escape character
-    my $left_e  = 0;
-    my $right_e = 0;
-    my @char = $string =~ m/ \G (\$\d+|\\\d+|->|=>|\\?(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])) /oxmsg;
-    for (my $i=0; $i <= $#char; $i++) {
-
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A ([\x81-\xFE]) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
-            $char[$i] = $1 . '\\' . $2;
-        }
-
-        # \L \U \Q \E
-        # or
-        # s ( ) { } --> s ( ) < >
-        # s ( ) [ ] --> s ( ) < >
-        # s ( ) : : --> s ( ) < >
-        # s ( ) @ @ --> s ( ) < >
-        # s { } { } --> s { } < >
-        # s { } [ ] --> s { } < >
-        # s { } : : --> s { } < >
-        # s { } @ @ --> s { } < >
-        # s < > { } --> s < > < >
-        # s < > [ ] --> s < > < >
-        # s < > : : --> s < > < >
-        # s < > @ @ --> s < > < >
-        elsif ($char[$i] =~ m/\A ([<>]) \z/oxms) {
+        # escape $ @ / and \
+        elsif ($char[$i] =~ m{\A [\$\@/\\] \z}oxms) {
             $char[$i] = '\\' . $char[$i];
         }
-        elsif ($char[$i] eq '\L') {
-            $char[$i] = '@{[Egbk::lc qq<';
-            $left_e++;
+
+        # rewrite character class or escape character
+        elsif (my $char = classic_character_class($char[$i],$modifier)) {
+            $char[$i] = $char;
         }
-        elsif ($char[$i] eq '\U') {
-            $char[$i] = '@{[Egbk::uc qq<';
-            $left_e++;
+
+        # /i modifier
+        elsif ($char[$i] =~ m/\A [A-Za-z] \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '[' . CORE::uc($char[$i]) . CORE::lc($char[$i]) . ']';
+            }
         }
-        elsif ($char[$i] eq '\Q') {
-            $char[$i] = '@{[CORE::quotemeta qq<';
-            $left_e++;
-        }
-        elsif ($char[$i] eq '\E') {
-            if ($right_e < $left_e) {
-                $char[$i] = '>]}';
-                $right_e++;
+
+        # quote character before ? + * {
+        elsif (($i >= 1) and ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms)) {
+            if (CORE::length($char[$i-1]) == 1) {
             }
             else {
-                $char[$i] = '';
+                $char[$i-1] = '(?:' . $char[$i-1] . ')';
             }
         }
     }
 
-    # return string
     $modifier =~ tr/i//d;
-    if ($left_e > $right_e) {
-        if ($modifier =~ /e/) {
-            return join '',
-                $delimiter,
-                'Egbk::shift_matched_var().',     @char, '>]}' x ($left_e - $right_e),
-                $end_delimiter, $modifier;
-        }
-        else {
-            return join '',
-                $delimiter,
-                '@{[Egbk::shift_matched_var()]}', @char, '>]}' x ($left_e - $right_e),
-                $end_delimiter, $modifier;
-        }
-    }
-    else {
-        if ($modifier =~ /e/) {
-            return join '',
-                $delimiter,
-                'Egbk::shift_matched_var().',     @char,
-                $end_delimiter, $modifier;
-        }
-        else {
-            return join '',
-                $delimiter,
-                '@{[Egbk::shift_matched_var()]}', @char,
-                $end_delimiter, $modifier;
-        }
-    }
+    $delimiter     = '/';
+    $end_delimiter = '/';
+    my $capture_your_gap = '';
+    $capture_your_gap = "($your_gap)";
+    return join '', $ope, $delimiter, $capture_your_gap, '(?:', @char, ')', $s_matched, $end_delimiter, $modifier;
 }
 
 #
-# escape string (s$$here$)
-#
-sub e_s2_dol {
-    my($delimiter,$end_delimiter,$string,$modifier) = @_;
-    $modifier ||= '';
-
-    $slash = 'div';
-
-    my $metachar = qr/[\@\\]/oxms;
-
-    # escape character
-    my $left_e  = 0;
-    my $right_e = 0;
-    my @char = $string =~ m/ \G (\$\d+|\\\d+|->|=>|\\?(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])) /oxmsg;
-    for (my $i=0; $i <= $#char; $i++) {
-
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A ([\x81-\xFE]) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
-            $char[$i] = $1 . '\\' . $2;
-        }
-
-        # escape single octet
-        elsif ($char[$i] =~ m/\A (\Q$end_delimiter\E) \z/xms) {
-            $char[$i] = '\\' . $1;
-        }
-
-        # \L \U \Q \E
-        elsif ($char[$i] =~ m/\A ([<>]) \z/oxms) {
-            if ($right_e < $left_e) {
-                $char[$i] = '\\' . $char[$i];
-            }
-        }
-        elsif ($char[$i] eq '\L') {
-            $char[$i] = '@{[Egbk::lc qq<';
-            $left_e++;
-        }
-        elsif ($char[$i] eq '\U') {
-            $char[$i] = '@{[Egbk::uc qq<';
-            $left_e++;
-        }
-        elsif ($char[$i] eq '\Q') {
-            $char[$i] = '@{[CORE::quotemeta qq<';
-            $left_e++;
-        }
-        elsif ($char[$i] eq '\E') {
-            if ($right_e < $left_e) {
-                $char[$i] = '>]}';
-                $right_e++;
-            }
-            else {
-                $char[$i] = '';
-            }
-        }
-    }
-
-    # return string
-    $modifier =~ tr/i//d;
-    if ($left_e > $right_e) {
-        if ($modifier =~ /e/) {
-            return join '',
-                $delimiter,
-                'Egbk::shift_matched_var().',     @char, '>]}' x ($left_e - $right_e),
-                $end_delimiter, $modifier;
-        }
-        else {
-            return join '',
-                $delimiter,
-                '@{[Egbk::shift_matched_var()]}', @char, '>]}' x ($left_e - $right_e),
-                $end_delimiter, $modifier;
-        }
-    }
-    else {
-        if ($modifier =~ /e/) {
-            return join '',
-                $delimiter,
-                'Egbk::shift_matched_var().',     @char,
-                $end_delimiter, $modifier;
-        }
-        else {
-            return join '',
-                $delimiter,
-                '@{[Egbk::shift_matched_var()]}', @char,
-                $end_delimiter, $modifier;
-        }
-    }
-}
-
-#
-# escape q string (s''here')
+# escape regexp (s''here')
 #
 sub e_s2_q {
-    my($delimiter,$end_delimiter,$string,$modifier) = @_;
-    $modifier ||= '';
+    my($ope,$delimiter,$end_delimiter,$string) = @_;
 
     $slash = 'div';
 
-    my @char = $string =~ m/ \G ([\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) /oxmsg;
+    my @char = $string =~ m/ \G ([\$\@\/\\]|$q_char) /oxmsg;
     for (my $i=0; $i <= $#char; $i++) {
+        if (0) {
+        }
 
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A ([\x81-\xFE]) (\\|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
+        # escape last octet of multiple octet
+        elsif ($char[$i] =~ m/\A ([\x80-\xFF].*) (\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
+            $char[$i] = $1 . '\\' . $2;
+        }
+        elsif (($char[$i] =~ m/\A ([\x80-\xFF].*) (\\) \z/xms) and defined($char[$i+1]) and ($char[$i+1] eq '\\')) {
             $char[$i] = $1 . '\\' . $2;
         }
 
-        # escape single octet
-        elsif ($char[$i] =~ m/\A (\\|\$|\@|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
-            $char[$i] = '\\' . $1;
+        # escape $ @ / and \
+        elsif ($char[$i] =~ m{\A [\$\@/\\] \z}oxms) {
+            $char[$i] = '\\' . $char[$i];
         }
     }
+    if (defined($char[-1]) and ($char[-1] =~ m/\A ([\x80-\xFF].*) (\\) \z/xms)) {
+        $char[-1] = $1 . '\\' . $2;
+    }
 
-    $modifier =~ tr/i//d;
-    if ($modifier =~ /e/) {
-        return join '',
-            $delimiter,
-            'Egbk::shift_matched_var().',     @char,
-            $end_delimiter, $modifier;
-    }
-    else {
-        return join '',
-            $delimiter,
-            '@{[Egbk::shift_matched_var()]}', @char,
-            $end_delimiter, $modifier;
-    }
+    return join '', $ope, $delimiter, @char,   $end_delimiter;
 }
 
 #
-# escape regexp (qr//)
+# escape regexp (s/here/and here/modifier)
 #
-sub e_qr {
-    my($ope,$delimiter,$end_delimiter,$string,$modifier) = @_;
+sub e_sub {
+    my($variable,$delimiter1,$pattern,$end_delimiter1,$delimiter2,$replacement,$end_delimiter2,$modifier) = @_;
     $modifier ||= '';
+
+    if ($variable eq '') {
+        $variable      = '$_';
+        $bind_operator = ' =~ ';
+    }
 
     $slash = 'div';
 
-    my $metachar = qr/[\@\\|[\]{^]/oxms;
+    # P.128 Start of match (or end of previous match): \G
+    # in Chapter 3: Overview of Regular Expression Features and Flavors
+    # P.312 Iterative Matching: Scalar Context, with /g
+    # in Chapter 7: Perl
+    # of ISBN 0-596-00272-6 Mastering Regular Expressions, Second edition 
 
-    # split regexp
-    my @char = $string =~ m{\G(
-        \\  [0-7]{2,3}       |
-        \\x [0-9A-Fa-f]{1,2} |
-        \\c [\x40-\x5F]      |
-        \\  (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) |
-        [\$\@] $qq_variable  |
-        \[\:\^ [a-z]+ \:\]   |
-        \[\:   [a-z]+ \:\]   |
-        \[\^                 |
-            (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])
-    )}oxmsg;
+    my $e_modifier = $modifier =~ tr/e//d;
 
-    # unescape character
-    my $left_e  = 0;
-    my $right_e = 0;
-    for (my $i=0; $i <= $#char; $i++) {
-
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A \\? ([\x81-\xFE]) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
-            $char[$i] = $1 . '\\' . $2;
-        }
-
-        # join separated double octet
-        elsif ($char[$i] =~ m/\A \\ (?:2[0-7][1-7]|3[0-7][0-6]) \z/oxms) {
-            if ($i < $#char) {
-                $char[$i] .= $char[$i+1];
-                splice @char, $i+1, 1;
-            }
-        }
-        elsif ($char[$i] =~ m/\A \\x (?:8[1-9A-Fa-f]|[9A-Ea-e][0-9A-Fa-f]|[Ff][0-9A-Ea-e]) \z/oxms) {
-            if ($i < $#char) {
-                $char[$i] .= $char[$i+1];
-                splice @char, $i+1, 1;
-            }
-        }
-
-        # open character class [...]
-        elsif ($char[$i] eq '[') {
-            my $left = $i;
-            while (1) {
-                if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
-                }
-                if ($char[$i] eq ']') {
-                    my $right = $i;
-
-                    # [...]
-                    splice @char, $left, $right-$left+1, charlist_qr(@char[$left+1..$right-1], $modifier);
-
-                    $i = $left;
-                    last;
-                }
-            }
-        }
-
-        # open character class [^...]
-        elsif ($char[$i] eq '[^') {
-            my $left = $i;
-            while (1) {
-                if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
-                }
-                if ($char[$i] eq ']') {
-                    my $right = $i;
-
-                    # [^...]
-                    splice @char, $left, $right-$left+1, charlist_not_qr(@char[$left+1..$right-1], $modifier);
-
-                    $i = $left;
-                    last;
-                }
-            }
-        }
-
-        # rewrite character class or escape character
-        elsif (my $char = {
-            '.'  => ($modifier =~ /s/) ?
-                    '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])' :
-                    '(?:[\x81-\xFE][\x00-\xFF]|[^\n])',
-            '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-            '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-            '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-            '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-            '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$char[$i]}
-        ) {
-            $char[$i] = $char;
-        }
-
-        # /i modifier
-        elsif ($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '[' . CORE::uc($c) . CORE::lc($c) . ']';
-            }
-        }
-
-        # \L \U \Q \E
-        elsif ($char[$i] =~ m/\A ([<>]) \z/oxms) {
-            if ($right_e < $left_e) {
-                $char[$i] = '\\' . $char[$i];
-            }
-        }
-        elsif ($char[$i] eq '\L') {
-            $char[$i] = '@{[Egbk::lc qq<';
-            $left_e++;
-        }
-        elsif ($char[$i] eq '\U') {
-            $char[$i] = '@{[Egbk::uc qq<';
-            $left_e++;
-        }
-        elsif ($char[$i] eq '\Q') {
-            $char[$i] = '@{[CORE::quotemeta qq<';
-            $left_e++;
-        }
-        elsif ($char[$i] eq '\E') {
-            if ($right_e < $left_e) {
-                $char[$i] = '>]}';
-                $right_e++;
-            }
-            else {
-                $char[$i] = '';
-            }
-        }
-
-        # $scalar or @array
-        elsif ($char[$i] =~ m/\A [\$\@].+ /oxms) {
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '@{[Egbk::ignorecase(' . e_string($char[$i]) . ')]}';
-            }
-            else {
-                $char[$i] =                           e_string($char[$i]);
-            }
-        }
-
-        # quote double octet character before ? + * {
-        elsif (
-            ($i >= 1) and
-            ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms) and
-            ($char[$i-1] =~ m/\A 
-                (?:
-                        [\x81-\xFE] | 
-                    \\  (?:2[0-7][1-7]|3[0-7][0-6]) |
-                    \\x (?:8[1-9A-Fa-f]|[9A-Ea-e][0-9A-Fa-f]|[Ff][0-9A-Ea-e])
-                )
-                (?:
-                        [\x00-\xFF] |
-                    \\  [0-7]{2,3} |
-                    \\x [0-9-A-Fa-f]{1,2}
-                )
-             \z/oxms)
-        ) {
-            $char[$i-1] = '(?:' . $char[$i-1] . ')';
-        }
+    my $my = '';
+    if ($variable =~ s/\A \( \s* ( (?: local \b | my \b | our \b | state \b )? .+ ) \) \z/$1/oxms) {
+        $my = $variable;
+        $variable =~ s/ (?: local \b | my \b | our \b | state \b ) \s* //oxms;
+        $variable =~ s/ = .+ \z//oxms;
     }
 
-    # make regexp string
-    my $re;
-    $modifier =~ tr/i//d;
-    if ($left_e > $right_e) {
-        $re = join '', $ope, $delimiter, $your_gap, @char, '>]}' x ($left_e - $right_e), $end_delimiter, $modifier;
+    (my $variable_basename = $variable) =~ s/ [\[\{].* \z//oxms;
+    $variable_basename =~ s/ \s+ \z//oxms;
+
+    # quote replacement string
+    my $q_replacement = '';
+    if ($delimiter2 eq "'") {
+        $q_replacement = e_s2_q('qq', '/',         '/',             $replacement);
     }
     else {
-        $re = join '', $ope, $delimiter, $your_gap, @char,                               $end_delimiter, $modifier;
+        $q_replacement = e_qq  ('qq', $delimiter2, $end_delimiter2, $replacement);
     }
-    return $re;
+
+    # escape replacement string
+    my $e_replacement = '';
+    if ($q_replacement !~ m/'/oxms) {
+        $e_replacement = e_q('',  "'", "'", $q_replacement); # --> q' '
+    }
+    elsif ($q_replacement !~ m{/}oxms) {
+        $e_replacement = e_q('q',  '/', '/', $q_replacement); # --> q/ /
+    }
+    elsif ($q_replacement !~ m/\#/oxms) {
+        $e_replacement = e_q('q',  '#', '#', $q_replacement); # --> q# #
+    }
+    elsif ($q_replacement !~ m/[\<\>]/oxms) {
+        $e_replacement = e_q('q', '<', '>', $q_replacement); # --> q< >
+    }
+    elsif ($q_replacement !~ m/[\(\)]/oxms) {
+        $e_replacement = e_q('q', '(', ')', $q_replacement); # --> q( )
+    }
+    elsif ($q_replacement !~ m/[\{\}]/oxms) {
+        $e_replacement = e_q('q', '{', '}', $q_replacement); # --> q{ }
+    }
+    else {
+        for my $char (qw( ! " $ % & * + . : = ? @ ^ ` | ~ ), "\x00".."\x1F", "\x7F", "\xFF") {
+            if ($q_replacement !~ m/\Q$char\E/xms) {
+                $e_replacement = e_q('q', $char, $char, $q_replacement);
+                last;
+            }
+        }
+    }
+
+    my $local = '';
+    if ($variable_basename =~ /::/) {
+        $local = 'local';
+    }
+    else{
+        $local = 'my';
+    }
+
+    my $sub = '';
+    if (0) {
+    }
+
+    # s///g with multibyte anchoring
+    elsif ($modifier =~ m/g/oxms) {
+        $sub = sprintf(
+            #      1  2       3  4              5 6 7                                     8  9         10  1112  13      14           15          16      17     18          19       20    21             22
+            q<eval{%s %s_n=0; %s %s_a=''; while(%s%s%s){ no strict qw(refs); local $^W=0; %s %s_r=eval %s; %s%s="%s_a${1}%s_r$'"; pos(%s)=length "%s_a${1}%s_r"; %s_a=substr(%s,0,pos(%s)); %s_n++} return %s_n}>,
+
+            $local,                                                                       #  1
+                $variable_basename,                                                       #  2
+            $local,                                                                       #  3
+                $variable_basename,                                                       #  4
+            $variable,                                                                    #  5
+            $bind_operator,                                                               #  6
+            ($delimiter1 eq "'") ?                                                        #  7
+            e_s1_q('m', $delimiter1, $end_delimiter1, $pattern, $modifier) :              #  :
+            e_s1  ('m', $delimiter1, $end_delimiter1, $pattern, $modifier),               #  :
+            $local,                                                                       #  8
+                $variable_basename,                                                       #  9
+            $e_replacement,                                                               # 10
+            sprintf('%s_r=eval %s_r; ', $variable_basename, $variable_basename) x $e_modifier, # 11
+            $variable,                                                                    # 12
+                $variable_basename,                                                       # 13
+                $variable_basename,                                                       # 14
+            $variable,                                                                    # 15
+                $variable_basename,                                                       # 16
+                $variable_basename,                                                       # 17
+                $variable_basename,                                                       # 18
+            $variable,                                                                    # 19
+            $variable,                                                                    # 20
+                $variable_basename,                                                       # 21
+                $variable_basename,                                                       # 22
+        );
+    }
+
+    # s///g without multibyte anchoring
+    elsif ($modifier =~ m/g/oxms) {
+        $sub = sprintf(
+            #      1  2             3 4 5                                     6  7         8   9 10    11           12            13     14             15
+            q<eval{%s %s_n=0; while(%s%s%s){ no strict qw(refs); local $^W=0; %s %s_r=eval %s; %s%s="$`%s_r$'"; pos(%s)=length "$`%s_r"; %s_n++} return %s_n}>,
+
+            $local,                                                                       #  1
+                $variable_basename,                                                       #  2
+            $variable,                                                                    #  3
+            $bind_operator,                                                               #  4
+            ($delimiter1 eq "'") ?                                                        #  5
+            e_s1_q('m', $delimiter1, $end_delimiter1, $pattern, $modifier) :              #  :
+            e_s1  ('m', $delimiter1, $end_delimiter1, $pattern, $modifier),               #  :
+            $local,                                                                       #  6
+                $variable_basename,                                                       #  7
+            $e_replacement,                                                               #  8
+            sprintf('%s_r=eval %s_r; ', $variable_basename, $variable_basename) x $e_modifier, #  9
+            $variable,                                                                    # 10
+                $variable_basename,                                                       # 11
+            $variable,                                                                    # 12
+                $variable_basename,                                                       # 13
+                $variable_basename,                                                       # 14
+                $variable_basename,                                                       # 15
+        );
+    }
+
+    # s///
+    else {
+
+        my $prematch = q{$`};
+        $prematch = q{${1}};
+
+        $sub = sprintf(
+            #  1 2 3                                            4  5         6   7 8   9 10
+            q<(%s%s%s) ? eval{ no strict qw(refs); local $^W=0; %s %s_r=eval %s; %s%s="%s%s_r$'"; 1 } : undef>,
+
+            $variable,                                                                    #  1
+            $bind_operator,                                                               #  2
+            ($delimiter1 eq "'") ?                                                        #  3
+            e_s1_q('m', $delimiter1, $end_delimiter1, $pattern, $modifier) :              #  :
+            e_s1  ('m', $delimiter1, $end_delimiter1, $pattern, $modifier),               #  :
+            $local,                                                                       #  4
+                $variable_basename,                                                       #  5
+            $e_replacement,                                                               #  6
+            sprintf('%s_r=eval %s_r; ', $variable_basename, $variable_basename) x $e_modifier, #  7
+            $variable,                                                                    #  8
+            $prematch,                                                                    #  9
+                $variable_basename,                                                       # 10
+        );
+    }
+
+    # (my $foo = $bar) =~ s///   -->   (my $foo = $bar, eval { ... })[1]
+    if ($my ne '') {
+        $sub = "($my, $sub)[1]";
+    }
+
+    # clear s/// variable
+    $sub_variable = '';
+    $bind_operator = '';
+
+    return $sub;
 }
 
 #
-# escape regexp (qr'')
+# escape chdir (q//, '')
 #
-sub e_qr_q {
-    my($ope,$delimiter,$end_delimiter,$string,$modifier) = @_;
-    $modifier ||= '';
+sub e_chdir_q {
+    my($ope,$delimiter,$end_delimiter,$string) = @_;
 
-    $slash = 'div';
+    if ($^W) {
+        if (Egbk::_MSWin32_5Cended_path($string)) {
+            if ($] !~ /^5\.005/) {
+                warn <<END;
+$__FILE__: Can't chdir to '$string'
 
-    # split regexp
-    my @char = $string =~ m{\G(
-        \[\:\^ [a-z]+ \:\] |
-        \[\:   [a-z]+ \:\] |
-        \[\^               |
-        \\?    (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])
-    )}oxmsg;
-
-    # unescape character
-    for (my $i=0; $i <= $#char; $i++) {
-
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A ([\x81-\xFE]) ([\\|\[\{\^]|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
-            $char[$i] = $1 . '\\' . $2;
-        }
-
-        # open character class [...]
-        elsif ($char[$i] eq '[') {
-            my $left = $i;
-            while (1) {
-                if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
-                }
-                if ($char[$i] eq ']') {
-                    my $right = $i;
-
-                    # [...]
-                    splice @char, $left, $right-$left+1, charlist_qr(@char[$left+1..$right-1], $modifier);
-
-                    $i = $left;
-                    last;
-                }
+chdir does not work with chr(0x5C) at end of path
+http://bugs.activestate.com/show_bug.cgi?id=81839
+END
             }
-        }
-
-        # open character class [^...]
-        elsif ($char[$i] eq '[^') {
-            my $left = $i;
-            while (1) {
-                if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
-                }
-                if ($char[$i] eq ']') {
-                    my $right = $i;
-
-                    # [^...]
-                    splice @char, $left, $right-$left+1, charlist_not_qr(@char[$left+1..$right-1], $modifier);
-
-                    $i = $left;
-                    last;
-                }
-            }
-        }
-
-        # rewrite character class or escape character
-        elsif (my $char = {
-            '.'  => ($modifier =~ /s/) ?
-                    '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])' :
-                    '(?:[\x81-\xFE][\x00-\xFF]|[^\n])',
-            '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-            '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-            '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-            '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-            '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$char[$i]}
-        ) {
-            $char[$i] = $char;
-        }
-
-        # /i modifier
-        elsif ($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '[' . CORE::uc($c) . CORE::lc($c) . ']';
-            }
-        }
-
-        # quote double octet character before ? + * {
-        elsif (
-            ($i >= 1) and
-            ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms) and
-            ($char[$i-1] =~ m/\A [\x81-\xFE] \\? [\x00-\xFF] \z/oxms)
-        ) {
-            $char[$i-1] = '(?:' . $char[$i-1] . ')';
         }
     }
 
-    $modifier =~ tr/i//d;
-    return join '', $ope, $delimiter, $your_gap, @char, $end_delimiter, $modifier;
+    return e_q($ope,$delimiter,$end_delimiter,$string);
+}
+
+#
+# escape chdir (qq//, "")
+#
+sub e_chdir {
+    my($ope,$delimiter,$end_delimiter,$string) = @_;
+
+    if ($^W) {
+        if (Egbk::_MSWin32_5Cended_path($string)) {
+            if ($] !~ /^5\.005/) {
+                warn <<END;
+$__FILE__: Can't chdir to '$string'
+
+chdir does not work with chr(0x5C) at end of path
+http://bugs.activestate.com/show_bug.cgi?id=81839
+END
+            }
+        }
+    }
+
+    return e_qq($ope,$delimiter,$end_delimiter,$string);
 }
 
 #
@@ -3693,21 +4132,28 @@ sub e_split {
     my($ope,$delimiter,$end_delimiter,$string,$modifier) = @_;
     $modifier ||= '';
 
+    my $ignorecase = ($modifier =~ m/i/oxms) ? 1 : 0;
+
     $slash = 'div';
 
     my $metachar = qr/[\@\\|[\]{^]/oxms;
 
     # split regexp
     my @char = $string =~ m{\G(
-        \\  [0-7]{2,3}       |
-        \\x [0-9A-Fa-f]{1,2} |
-        \\c [\x40-\x5F]      |
-        \\  (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) |
-        [\$\@] $qq_variable  |
-        \[\:\^ [a-z]+ \:\]   |
-        \[\:   [a-z]+ \:\]   |
-        \[\^                 |
-            (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])
+        \\  [0-7]{2,3}             |
+        \\x [0-9A-Fa-f]{1,2}       |
+        \\c [\x40-\x5F]            |
+        \\  (?:$q_char)            |
+        [\$\@] $qq_variable        |
+        \$ \s* \d+                 |
+        \$ \s* \{ \s* \d+ \s* \}   |
+        \$ \$ (?![\w\{])           |
+        \$ \s* \$ \s* $qq_variable |
+        \[\:\^ [a-z]+ \:\]         |
+        \[\:   [a-z]+ \:\]         |
+        \[\^                       |
+        \(\?                       |
+            (?:$q_char)
     )}oxmsg;
 
     # unescape character
@@ -3715,37 +4161,52 @@ sub e_split {
     my $right_e = 0;
     for (my $i=0; $i <= $#char; $i++) {
 
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A \\? ([\x81-\xFE]) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
+        # "\L\u" --> "\u\L"
+        if (($char[$i] eq '\L') and ($char[$i+1] eq '\u')) {
+            @char[$i,$i+1] = @char[$i+1,$i];
+        }
+
+        # "\U\l" --> "\l\U"
+        elsif (($char[$i] eq '\U') and ($char[$i+1] eq '\l')) {
+            @char[$i,$i+1] = @char[$i+1,$i];
+        }
+
+        if (0) {
+        }
+
+        # escape last octet of multiple octet
+        elsif ($char[$i] =~ m/\A \\? ([\x80-\xFF].*) ($metachar|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
             $char[$i] = $1 . '\\' . $2;
         }
 
-        # join separated double octet
-        elsif ($char[$i] =~ m/\A \\ (?:2[0-7][1-7]|3[0-7][0-6]) \z/oxms) {
-            if ($i < $#char) {
-                $char[$i] .= $char[$i+1];
-                splice @char, $i+1, 1;
+        # join separated multiple octet
+        elsif ($char[$i] =~ m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms) {
+            if (   ($i+3 <= $#char) and (grep(m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms, @char[$i+1..$i+3]) == 3) and (eval(sprintf '"%s%s%s%s"', @char[$i..$i+3]) =~ m/\A $q_char \z/oxms)) {
+                $char[$i] .= join '', splice @char, $i+1, 3;
             }
-        }
-        elsif ($char[$i] =~ m/\A \\x (?:8[1-9A-Fa-f]|[9A-Ea-e][0-9A-Fa-f]|[Ff][0-9A-Ea-e]) \z/oxms) {
-            if ($i < $#char) {
-                $char[$i] .= $char[$i+1];
-                splice @char, $i+1, 1;
+            elsif (($i+2 <= $#char) and (grep(m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms, @char[$i+1..$i+2]) == 2) and (eval(sprintf '"%s%s%s"',   @char[$i..$i+2]) =~ m/\A $q_char \z/oxms)) {
+                $char[$i] .= join '', splice @char, $i+1, 2;
+            }
+            elsif (($i+1 <= $#char) and (grep(m/\A (?: \\ [0-7]{2,3} | \\x [0-9A-Fa-f]{1,2}) \z/oxms, $char[$i+1      ]) == 1) and (eval(sprintf '"%s%s"',     @char[$i..$i+1]) =~ m/\A $q_char \z/oxms)) {
+                $char[$i] .= join '', splice @char, $i+1, 1;
             }
         }
 
         # open character class [...]
         elsif ($char[$i] eq '[') {
             my $left = $i;
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [...]
-                    splice @char, $left, $right-$left+1, charlist_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -3756,15 +4217,18 @@ sub e_split {
         # open character class [^...]
         elsif ($char[$i] eq '[^') {
             my $left = $i;
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [^...]
-                    splice @char, $left, $right-$left+1, charlist_not_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_not_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -3773,40 +4237,49 @@ sub e_split {
         }
 
         # rewrite character class or escape character
-        elsif (my $char = {
-            '.'  => ($modifier =~ /s/) ?
-                    '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])' :
-                    '(?:[\x81-\xFE][\x00-\xFF]|[^\n])',
-            '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-            '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-            '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-            '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-            '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$char[$i]}
-        ) {
+        elsif (my $char = classic_character_class($char[$i],$modifier)) {
             $char[$i] = $char;
+        }
+
+        # P.794 29.2.161. split
+        # in Chapter 29: Functions
+        # of ISBN 0-596-00027-8 Programming Perl Third Edition.
+        # said "The //m modifier is assumed when you split on the pattern /^/",
+        # but perl5.008 is not so. Therefore, this software adds //m.
+        # (and so on)
+
+        # split(m/^/) --> split(m/^/m)
+        elsif (($char[$i] eq '^') and ($modifier !~ m/m/oxms)) {
+            $modifier .= 'm';
         }
 
         # /i modifier
         elsif ($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '[' . CORE::uc($c) . CORE::lc($c) . ']';
+            if ($ignorecase) {
+                $char[$i] = '[' . CORE::uc($1) . CORE::lc($1) . ']';
             }
         }
 
-        # \L \U \Q \E
+        # \u \l \U \L \Q \E
         elsif ($char[$i] =~ m/\A ([<>]) \z/oxms) {
             if ($right_e < $left_e) {
                 $char[$i] = '\\' . $char[$i];
             }
         }
-        elsif ($char[$i] eq '\L') {
-            $char[$i] = '@{[Egbk::lc qq<';
+        elsif ($char[$i] eq '\u') {
+            $char[$i] = '@{[Egbk::ucfirst qq<';
+            $left_e++;
+        }
+        elsif ($char[$i] eq '\l') {
+            $char[$i] = '@{[Egbk::lcfirst qq<';
             $left_e++;
         }
         elsif ($char[$i] eq '\U') {
             $char[$i] = '@{[Egbk::uc qq<';
+            $left_e++;
+        }
+        elsif ($char[$i] eq '\L') {
+            $char[$i] = '@{[Egbk::lc qq<';
             $left_e++;
         }
         elsif ($char[$i] eq '\Q') {
@@ -3822,48 +4295,114 @@ sub e_split {
                 $char[$i] = '';
             }
         }
-
-        # $scalar or @array
-        elsif ($char[$i] =~ m/\A [\$\@].+ /oxms) {
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '@{[Egbk::ignorecase(' . e_string($char[$i]) . ')]}';
+        elsif ($char[$i] eq '\Q') {
+            while (1) {
+                if (++$i > $#char) {
+                    last;
+                }
+                if ($char[$i] eq '\E') {
+                    last;
+                }
             }
-            else {
-                $char[$i] =                           e_string($char[$i]);
+        }
+        elsif ($char[$i] eq '\E') {
+        }
+
+        # $0 --> $0
+        elsif ($char[$i] =~ m/\A \$ 0 \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+        elsif ($char[$i] =~ m/\A \$ \{ \s* 0 \s* \} \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
             }
         }
 
-        # quote double octet character before ? + * {
-        elsif (
-            ($i >= 1) and
-            ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms) and
-            ($char[$i-1] =~ m/\A 
-                (?:
-                        [\x81-\xFE] | 
-                    \\  (?:2[0-7][1-7]|3[0-7][0-6]) |
-                    \\x (?:8[1-9A-Fa-f]|[9A-Ea-e][0-9A-Fa-f]|[Ff][0-9A-Ea-e])
-                )
-                (?:
-                        [\x00-\xFF] |
-                    \\  [0-7]{2,3} |
-                    \\x [0-9-A-Fa-f]{1,2}
-                )
-             \z/oxms)
-        ) {
-            $char[$i-1] = '(?:' . $char[$i-1] . ')';
+        # $$ --> $$
+        elsif ($char[$i] =~ m/\A \$\$ \z/oxms) {
+        }
+
+        # $1, $2, $3 --> $2, $3, $4 (only when multibyte anchoring is enable)
+        elsif ($char[$i] =~ m/\A \$ ([1-9][0-9]*) \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+        elsif ($char[$i] =~ m/\A \$ \{ \s* ([1-9][0-9]*) \s* \} \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $$foo[ ... ] --> $ $foo->[ ... ]
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \[ (?:$qq_bracket)*? \] ) \z/oxms) {
+            $char[$i] = e_capture($1.'->'.$2);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $$foo{ ... } --> $ $foo->{ ... }
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) ( \{ (?:$qq_brace)*? \} ) \z/oxms) {
+            $char[$i] = e_capture($1.'->'.$2);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $$foo
+        elsif ($char[$i] =~ m/\A \$ ( \$ [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* ) \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # ${ foo }
+        elsif ($char[$i] =~ m/\A \$ \s* \{ ( \s* [A-Za-z_][A-Za-z0-9_]*(?: ::[A-Za-z_][A-Za-z0-9_]*)* \s* ) \} \z/oxms) {
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $1 . ')]}';
+            }
+        }
+
+        # ${ ... }
+        elsif ($char[$i] =~ m/\A \$ \s* \{ \s* ( .+ ) \s* \} \z/oxms) {
+            $char[$i] = e_capture($1);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # $scalar or @array
+        elsif ($char[$i] =~ m/\A [\$\@].+ /oxms) {
+            $char[$i] = e_string($char[$i]);
+            if ($ignorecase) {
+                $char[$i] = '@{[Egbk::ignorecase(' . $char[$i] . ')]}';
+            }
+        }
+
+        # quote character before ? + * {
+        elsif (($i >= 1) and ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms)) {
+            if (CORE::length($char[$i-1]) == 1) {
+            }
+            elsif ($char[$i-1] =~ m/\A (?:\\[0-7]{2,3}|\\x[0-9-A-Fa-f]{1,2}) \z/oxms) {
+            }
+            else {
+                $char[$i-1] = '(?:' . $char[$i-1] . ')';
+            }
         }
     }
 
     # make regexp string
-    my $re;
     $modifier =~ tr/i//d;
     if ($left_e > $right_e) {
-        $re = join '', $ope, $delimiter, @char, '>]}' x ($left_e - $right_e), $end_delimiter, $modifier;
+        return join '', $ope, $delimiter, @char, '>]}' x ($left_e - $right_e), $end_delimiter, $modifier;
     }
-    else {
-        $re = join '', $ope, $delimiter, @char,                               $end_delimiter, $modifier;
-    }
-    return $re;
+    return     join '', $ope, $delimiter, @char,                               $end_delimiter, $modifier;
 }
 
 #
@@ -3873,6 +4412,8 @@ sub e_split_q {
     my($ope,$delimiter,$end_delimiter,$string,$modifier) = @_;
     $modifier ||= '';
 
+    my $ignorecase = ($modifier =~ m/i/oxms) ? 1 : 0;
+
     $slash = 'div';
 
     # split regexp
@@ -3880,29 +4421,34 @@ sub e_split_q {
         \[\:\^ [a-z]+ \:\] |
         \[\:   [a-z]+ \:\] |
         \[\^               |
-        \\?    (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])
+        \\?    (?:$q_char)
     )}oxmsg;
 
     # unescape character
     for (my $i=0; $i <= $#char; $i++) {
+        if (0) {
+        }
 
-        # escape second octet of double octet
-        if ($char[$i] =~ m/\A ([\x81-\xFE]) ([\\|\[\{\^]|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
+        # escape last octet of multiple octet
+        elsif ($char[$i] =~ m/\A ([\x80-\xFF].*) ([\\|\[\{\^]|\Q$delimiter\E|\Q$end_delimiter\E) \z/xms) {
             $char[$i] = $1 . '\\' . $2;
         }
 
         # open character class [...]
         elsif ($char[$i] eq '[') {
             my $left = $i;
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [...]
-                    splice @char, $left, $right-$left+1, charlist_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -3913,15 +4459,18 @@ sub e_split_q {
         # open character class [^...]
         elsif ($char[$i] eq '[^') {
             my $left = $i;
+            if ($char[$i+1] eq ']') {
+                $i++;
+            }
             while (1) {
                 if (++$i > $#char) {
-                    croak "$__FILE__: unmatched [] in regexp";
+                    die "$__FILE__: unmatched [] in regexp";
                 }
                 if ($char[$i] eq ']') {
                     my $right = $i;
 
                     # [^...]
-                    splice @char, $left, $right-$left+1, charlist_not_qr(@char[$left+1..$right-1], $modifier);
+                    splice @char, $left, $right-$left+1, Egbk::charlist_not_qr(@char[$left+1..$right-1], $modifier);
 
                     $i = $left;
                     last;
@@ -3930,35 +4479,29 @@ sub e_split_q {
         }
 
         # rewrite character class or escape character
-        elsif (my $char = {
-            '.'  => ($modifier =~ /s/) ?
-                    '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])' :
-                    '(?:[\x81-\xFE][\x00-\xFF]|[^\n])',
-            '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-            '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-            '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-            '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-            '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$char[$i]}
-        ) {
+        elsif (my $char = classic_character_class($char[$i],$modifier)) {
             $char[$i] = $char;
+        }
+
+        # split(m/^/) --> split(m/^/m)
+        elsif (($char[$i] eq '^') and ($modifier !~ m/m/oxms)) {
+            $modifier .= 'm';
         }
 
         # /i modifier
         elsif ($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                $char[$i] = '[' . CORE::uc($c) . CORE::lc($c) . ']';
+            if ($ignorecase) {
+                $char[$i] = '[' . CORE::uc($1) . CORE::lc($1) . ']';
             }
         }
 
-        # quote double octet character before ? + * {
-        elsif (
-            ($i >= 1) and
-            ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms) and
-            ($char[$i-1] =~ m/\A [\x81-\xFE] \\? [\x00-\xFF] \z/oxms)
-        ) {
-            $char[$i-1] = '(?:' . $char[$i-1] . ')';
+        # quote character before ? + * {
+        elsif (($i >= 1) and ($char[$i] =~ m/\A [\?\+\*\{] \z/oxms)) {
+            if (CORE::length($char[$i-1]) == 1) {
+            }
+            else {
+                $char[$i-1] = '(?:' . $char[$i-1] . ')';
+            }
         }
     }
 
@@ -3972,9 +4515,7 @@ sub e_split_q {
 sub e_require {
     my($module) = @_;
 
-    my $expr = $module;
-    $expr =~ s#::#/#g;
-    $expr .= '.pm' if $expr !~ m/ \.pm \z/oxmsi;
+    my $expr = _pathof($module);
 
     return qq<Egbk::require '$expr';>;
 }
@@ -3985,18 +4526,15 @@ sub e_require {
 sub e_use_noimport {
     my($module) = @_;
 
-    my $expr = $module;
-    $expr =~ s#::#/#g;
-    $expr .= '.pm' if $expr !~ m/ \.pm \z/oxmsi;
+    my $expr = _pathof($module);
 
-    my $fh = Symbol::gensym();
-    for my $prefix (@INC) {
-        my $realfilename = "$prefix/$expr";
+    my $fh = gensym();
+    for my $realfilename (_realfilename($expr)) {
 
-        if (sysopen($fh, $realfilename, O_RDONLY)) {
+        if (CORE::open($fh, $realfilename)) {
             local $/ = undef; # slurp mode
             my $script = <$fh>;
-            close($fh) or croak "Can't close file: $realfilename";
+            close($fh) or die "$__FILE__: Can't close file: $realfilename";
 
             if ($script =~ m/^ \s* use \s+ GBK \s* ([^;]*) ; \s* \n? $/oxms) {
                 return qq<BEGIN { Egbk::require '$expr'; }>;
@@ -4009,26 +4547,55 @@ sub e_use_noimport {
 }
 
 #
+# escape no without unimport
+#
+sub e_no_nounimport {
+    my($module) = @_;
+
+    my $expr = _pathof($module);
+
+    my $fh = gensym();
+    for my $realfilename (_realfilename($expr)) {
+
+        if (CORE::open($fh, $realfilename)) {
+            local $/ = undef; # slurp mode
+            my $script = <$fh>;
+            close($fh) or die "$__FILE__: Can't close file: $realfilename";
+
+            if ($script =~ m/^ \s* use \s+ GBK \s* ([^;]*) ; \s* \n? $/oxms) {
+                return qq<BEGIN { Egbk::require '$expr'; }>;
+            }
+            last;
+        }
+    }
+
+    return qq<no $module ();>;
+}
+
+#
 # escape use with import no parameter
 #
 sub e_use_noparam {
     my($module) = @_;
 
-    my $expr = $module;
-    $expr =~ s#::#/#g;
-    $expr .= '.pm' if $expr !~ m/ \.pm \z/oxmsi;
+    my $expr = _pathof($module);
 
-    my $fh = Symbol::gensym();
-    for my $prefix (@INC) {
-        my $realfilename = "$prefix/$expr";
+    my $fh = gensym();
+    for my $realfilename (_realfilename($expr)) {
 
-        if (sysopen($fh, $realfilename, O_RDONLY)) {
+        if (CORE::open($fh, $realfilename)) {
             local $/ = undef; # slurp mode
             my $script = <$fh>;
-            close($fh) or croak "Can't close file: $realfilename";
+            close($fh) or die "$__FILE__: Can't close file: $realfilename";
 
             if ($script =~ m/^ \s* use \s+ GBK \s* ([^;]*) ; \s* \n? $/oxms) {
-                return qq[BEGIN { Egbk::require '$expr'; $module->import(); }];
+
+                # P.326 UNIVERSAL: The Ultimate Ancestor Class
+                # in Chapter 12: Objects
+                # of ISBN 0-596-00027-8 Programming Perl Third Edition.
+                # (and so on)
+
+                return qq[BEGIN { Egbk::require '$expr'; $module->import() if $module->can('import'); }];
             }
             last;
         }
@@ -4038,26 +4605,55 @@ sub e_use_noparam {
 }
 
 #
+# escape no with unimport no parameter
+#
+sub e_no_noparam {
+    my($module) = @_;
+
+    my $expr = _pathof($module);
+
+    my $fh = gensym();
+    for my $realfilename (_realfilename($expr)) {
+
+        if (CORE::open($fh, $realfilename)) {
+            local $/ = undef; # slurp mode
+            my $script = <$fh>;
+            close($fh) or die "$__FILE__: Can't close file: $realfilename";
+
+            if ($script =~ m/^ \s* use \s+ GBK \s* ([^;]*) ; \s* \n? $/oxms) {
+
+                # P.326 UNIVERSAL: The Ultimate Ancestor Class
+                # in Chapter 12: Objects
+                # of ISBN 0-596-00027-8 Programming Perl Third Edition.
+                # (and so on)
+
+                return qq[BEGIN { Egbk::require '$expr'; $module->unimport() if $module->can('unimport'); }];
+            }
+            last;
+        }
+    }
+
+    return qq<no $module;>;
+}
+
+#
 # escape use with import parameters
 #
 sub e_use {
     my($module,$list) = @_;
 
-    my $expr = $module;
-    $expr =~ s#::#/#g;
-    $expr .= '.pm' if $expr !~ m/ \.pm \z/oxmsi;
+    my $expr = _pathof($module);
 
-    my $fh = Symbol::gensym();
-    for my $prefix (@INC) {
-        my $realfilename = "$prefix/$expr";
+    my $fh = gensym();
+    for my $realfilename (_realfilename($expr)) {
 
-        if (sysopen($fh, $realfilename, O_RDONLY)) {
+        if (CORE::open($fh, $realfilename)) {
             local $/ = undef; # slurp mode
             my $script = <$fh>;
-            close($fh) or croak "Can't close file: $realfilename";
+            close($fh) or die "$__FILE__: Can't close file: $realfilename";
 
             if ($script =~ m/^ \s* use \s+ GBK \s* ([^;]*) ; \s* \n? $/oxms) {
-                return qq[BEGIN { Egbk::require '$expr'; $module->import($list); }];
+                return qq[BEGIN { Egbk::require '$expr'; $module->import($list) if $module->can('import'); }];
             }
             last;
         }
@@ -4067,494 +4663,60 @@ sub e_use {
 }
 
 #
-# GBK open character list for qr
+# escape no with unimport parameters
 #
-sub charlist_qr {
-    my $modifier = pop @_;
-    my @char = @_;
+sub e_no {
+    my($module,$list) = @_;
 
-    # unescape character
-    for (my $i=0; $i <= $#char; $i++) {
+    my $expr = _pathof($module);
 
-        # escape - to ...
-        if ($char[$i] eq '-') {
-            if ((0 < $i) and ($i < $#char)) {
-                $char[$i] = '...';
+    my $fh = gensym();
+    for my $realfilename (_realfilename($expr)) {
+
+        if (CORE::open($fh, $realfilename)) {
+            local $/ = undef; # slurp mode
+            my $script = <$fh>;
+            close($fh) or die "$__FILE__: Can't close file: $realfilename";
+
+            if ($script =~ m/^ \s* use \s+ GBK \s* ([^;]*) ; \s* \n? $/oxms) {
+                return qq[BEGIN { Egbk::require '$expr'; $module->unimport($list) if $module->can('unimport'); }];
             }
-        }
-        elsif ($char[$i] =~ m/\A \\ ([0-7]{2,3}) \z/oxms) {
-            $char[$i] = chr oct $1;
-        }
-        elsif ($char[$i] =~ m/\A \\x ([0-9A-Fa-f]{1,2}) \z/oxms) {
-            $char[$i] = chr hex $1;
-        }
-        elsif ($char[$i] =~ m/\A \\c ([\x40-\x5F]) \z/oxms) {
-            $char[$i] = chr(ord($1) & 0x1F);
-        }
-        elsif ($char[$i] =~ m/\A (\\ [0nrtfbaedDhHsSvVwW]) \z/oxms) {
-            $char[$i] = {
-                '\0' => "\0",
-                '\n' => "\n",
-                '\r' => "\r",
-                '\t' => "\t",
-                '\f' => "\f",
-                '\b' => "\x08", # \b means backspace in character class
-                '\a' => "\a",
-                '\e' => "\e",
-                '\d' => '\d',
-                '\h' => '\h',
-                '\s' => '\s',
-                '\v' => '\v',
-                '\w' => '\w',
-                '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-                '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-                '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-                '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-                '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$1};
-        }
-        elsif ($char[$i] =~ m/\A \\ ([\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) \z/oxms) {
-            $char[$i] = $1;
+            last;
         }
     }
 
-    # open character list
-    my @singleoctet = ();
-    my @charlist    = ();
-    if ((scalar(@char) == 1) or ((scalar(@char) >= 2) and ($char[1] ne '...'))) {
-        if ($char[0] =~ m/\A [\x00-\xFF] \z/oxms) {
-            push @singleoctet, $char[0];
-        }
-        else {
-            push @charlist, $char[0];
-        }
-    }
-    for (my $i=1; $i <= $#char-1; ) {
-
-        # escaped -
-        if ($char[$i] eq '...') {
-
-            # range of single octet code
-            if (
-                ($char[$i-1] =~ m/\A [\x00-\xFF] \z/oxms) and
-                ($char[$i+1] =~ m/\A [\x00-\xFF] \z/oxms)
-            ) {
-                my $begin = unpack 'C', $char[$i-1];
-                my $end   = unpack 'C', $char[$i+1];
-                if ($begin > $end) {
-                    croak "$__FILE__: invalid [] range \"\\x" . unpack('H*',$char[$i-1]) . '-\\x' . unpack('H*',$char[$i+1]) . '" in regexp';
-                }
-                else {
-                    if ($modifier =~ m/i/oxms) {
-                        my %range = ();
-                        for my $c ($begin .. $end) {
-                            $range{ord CORE::uc chr $c} = 1;
-                            $range{ord CORE::lc chr $c} = 1;
-                        }
-
-                        my @lt = grep {$_ < $begin} sort {$a <=> $b} keys %range;
-                        if (scalar(@lt) == 1) {
-                            push @singleoctet, sprintf(q{\\x%02X},         $lt[0]);
-                        }
-                        elsif (scalar(@lt) >= 2) {
-                            push @singleoctet, sprintf(q{\\x%02X-\\x%02X}, $lt[0], $lt[-1]);
-                        }
-
-                        push @singleoctet, sprintf(q{\\x%02X-\\x%02X},     $begin, $end);
-
-                        my @gt = grep {$_ > $end  } sort {$a <=> $b} keys %range;
-                        if (scalar(@gt) == 1) {
-                            push @singleoctet, sprintf(q{\\x%02X},         $gt[0]);
-                        }
-                        elsif (scalar(@gt) >= 2) {
-                            push @singleoctet, sprintf(q{\\x%02X-\\x%02X}, $gt[0], $gt[-1]);
-                        }
-                    }
-                    else {
-                        push @singleoctet, sprintf(q{\\x%02X-\\x%02X},     $begin, $end);
-                    }
-                }
-            }
-
-            # range of double octet code
-            elsif (
-                ($char[$i-1] =~ m/\A [\x81-\xFE][\x00-\xFF] \z/oxms) and
-                ($char[$i+1] =~ m/\A [\x81-\xFE][\x00-\xFF] \z/oxms)
-            ) {
-                my($begin1,$begin2) = unpack 'CC', $char[$i-1];
-                my($end1,  $end2)   = unpack 'CC', $char[$i+1];
-                my $begin = $begin1 * 0x100 + $begin2;
-                my $end   = $end1   * 0x100 + $end2;
-                if ($begin > $end) {
-                    croak "$__FILE__: invalid [] range \"\\x" . unpack('H*',$char[$i-1]) . '-\\x' . unpack('H*',$char[$i+1]) . '" in regexp';
-                }
-                elsif ($begin1 == $end1) {
-                    push @charlist, sprintf(q{\\x%02X[\\x%02X-\\x%02X]}, $begin1, $begin2, $end2);
-                }
-                elsif (($begin1 + 1) == $end1) {
-                    push @charlist, sprintf(q{\\x%02X[\\x%02X-\\xFF]},   $begin1, $begin2);
-                    push @charlist, sprintf(q{\\x%02X[\\x00-\\x%02X]},   $end1,   $end2);
-                }
-                else {
-                    my @middle = ();
-                    for my $c ($begin1+1 .. $end1-1) {
-                        my $char = chr($c);
-                        if ($char =~ /\A [\x81-\xFE] \z/oxms) {
-                            push @middle, $c;
-                        }
-                    }
-                    if (scalar(@middle) == 0) {
-                        push @charlist, sprintf(q{\\x%02X[\\x%02X-\\xFF]},         $begin1,    $begin2);
-                        push @charlist, sprintf(q{\\x%02X[\\x00-\\x%02X]},         $end1,      $end2);
-                    }
-                    elsif (scalar(@middle) == 1) {
-                        push @charlist, sprintf(q{\\x%02X[\\x%02X-\\xFF]},         $begin1,    $begin2);
-                        push @charlist, sprintf(q{\\x%02X[\\x00-\\xFF]},           $middle[0]);
-                        push @charlist, sprintf(q{\\x%02X[\\x00-\\x%02X]},         $end1,      $end2);
-                    }
-                    else {
-                        push @charlist, sprintf(q{\\x%02X[\\x%02X-\\xFF]},         $begin1,    $begin2);
-                        push @charlist, sprintf(q{[\\x%02X-\\x%02X][\\x00-\\xFF]}, $middle[0], $middle[-1]);
-                        push @charlist, sprintf(q{\\x%02X[\\x00-\\x%02X]},         $end1,      $end2);
-                    }
-                }
-            }
-
-            # range error
-            else {
-                croak "$__FILE__: invalid [] range \"\\x" . unpack('H*',$char[$i-1]) . '-\\x' . unpack('H*',$char[$i+1]) . '" in regexp';
-            }
-
-            $i += 2;
-        }
-
-        # /i modifier
-        elsif (($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) and (($i+1 > $#char) or ($char[$i+1] ne '...'))) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                push @singleoctet, CORE::uc $c, CORE::lc $c;
-            }
-            else {
-                push @singleoctet, $c;
-            }
-            $i += 1;
-        }
-
-        # single character
-        elsif ($char[$i] =~ m/\A (?: [\x00-\xFF] | \\d | \\h | \\s | \\v | \\w )  \z/oxms) {
-            push @singleoctet, $char[$i];
-            $i += 1;
-        }
-        else {
-            push @charlist, $char[$i];
-            $i += 1;
-        }
-    }
-    if ((scalar(@char) >= 2) and ($char[-2] ne '...')) {
-        if ($char[-1] =~ m/\A [\x00-\xFF] \z/oxms) {
-            push @singleoctet, $char[-1];
-        }
-        else {
-            push @charlist, $char[-1];
-        }
-    }
-
-    # quote metachar
-    for (@singleoctet) {
-        if (m/\A \n \z/oxms) {
-            $_ = '\n';
-        }
-        elsif (m/\A \r \z/oxms) {
-            $_ = '\r';
-        }
-        elsif (m/\A ([\x00-\x1F\x7F-\xFF]) \z/oxms) {
-            $_ = sprintf(q{\\x%02X}, ord $1);
-        }
-        elsif (m/\A [\x00-\xFF] \z/oxms) {
-            $_ = quotemeta $_;
-        }
-    }
-    for (@charlist) {
-        if (m/\A ([\x81-\xFE]) ([\x00-\xFF]) \z/oxms) {
-            $_ = $1 . quotemeta $2;
-        }
-    }
-
-    # return character list
-    if (scalar(@singleoctet) == 0) {
-    }
-    elsif (scalar(@singleoctet) >= 2) {
-        push @charlist, '[' . join('',@singleoctet) . ']';
-    }
-    elsif ($singleoctet[0] =~ m/ . - . /oxms) {
-        push @charlist, '[' . $singleoctet[0] . ']';
-    }
-    else {
-        push @charlist, $singleoctet[0];
-    }
-    if (scalar(@charlist) >= 2) {
-        return '(?:' . join('|', @charlist) . ')';
-    }
-    else {
-        return $charlist[0];
-    }
+    return qq<no $module $list;>;
 }
 
 #
-# GBK open character list for not qr
+# file path of module
 #
-sub charlist_not_qr {
-    my $modifier = pop @_;
-    my @char = @_;
+sub _pathof {
+    my($expr) = @_;
 
-    # unescape character
-    for (my $i=0; $i <= $#char; $i++) {
-
-        # escape - to ...
-        if ($char[$i] eq '-') {
-            if ((0 < $i) and ($i < $#char)) {
-                $char[$i] = '...';
-            }
-        }
-        elsif ($char[$i] =~ m/\A \\ ([0-7]{2,3}) \z/oxms) {
-            $char[$i] = chr oct $1;
-        }
-        elsif ($char[$i] =~ m/\A \\x ([0-9A-Fa-f]{1,2}) \z/oxms) {
-            $char[$i] = chr hex $1;
-        }
-        elsif ($char[$i] =~ m/\A \\c ([\x40-\x5F]) \z/oxms) {
-            $char[$i] = chr(ord($1) & 0x1F);
-        }
-        elsif ($char[$i] =~ m/\A (\\ [0nrtfbaedDhHsSvVwW]) \z/oxms) {
-            $char[$i] = {
-                '\0' => "\0",
-                '\n' => "\n",
-                '\r' => "\r",
-                '\t' => "\t",
-                '\f' => "\f",
-                '\b' => "\x08", # \b means backspace in character class
-                '\a' => "\a",
-                '\e' => "\e",
-                '\d' => '\d',
-                '\h' => '\h',
-                '\s' => '\s',
-                '\v' => '\v',
-                '\w' => '\w',
-                '\D' => '(?:[\x81-\xFE][\x00-\xFF]|[^\d])',
-                '\H' => '(?:[\x81-\xFE][\x00-\xFF]|[^\h])',
-                '\S' => '(?:[\x81-\xFE][\x00-\xFF]|[^\s])',
-                '\V' => '(?:[\x81-\xFE][\x00-\xFF]|[^\v])',
-                '\W' => '(?:[\x81-\xFE][\x00-\xFF]|[^\w])',
-            }->{$1};
-        }
-        elsif ($char[$i] =~ m/\A \\ ([\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) \z/oxms) {
-            $char[$i] = $1;
-        }
-    }
-
-    # open character list
-    my @singleoctet = ();
-    my @charlist    = ();
-    if ((scalar(@char) == 1) or ((scalar(@char) >= 2) and ($char[1] ne '...'))) {
-        if ($char[0] =~ m/\A [\x00-\xFF] \z/oxms) {
-            push @singleoctet, $char[0];
-        }
-        else {
-            push @charlist, $char[0];
-        }
-    }
-    for (my $i=1; $i <= $#char-1; ) {
-
-        # escaped -
-        if ($char[$i] eq '...') {
-
-            # range of single octet code
-            if (
-                ($char[$i-1] =~ m/\A [\x00-\xFF] \z/oxms) and
-                ($char[$i+1] =~ m/\A [\x00-\xFF] \z/oxms)
-            ) {
-                my $begin = unpack 'C', $char[$i-1];
-                my $end   = unpack 'C', $char[$i+1];
-                if ($begin > $end) {
-                    croak "$__FILE__: invalid [] range \"\\x" . unpack('H*',$char[$i-1]) . '-\\x' . unpack('H*',$char[$i+1]) . '" in regexp';
-                }
-                else {
-                    if ($modifier =~ m/i/oxms) {
-                        my %range = ();
-                        for my $c ($begin .. $end) {
-                            $range{ord CORE::uc chr $c} = 1;
-                            $range{ord CORE::lc chr $c} = 1;
-                        }
-
-                        my @lt = grep {$_ < $begin} sort {$a <=> $b} keys %range;
-                        if (scalar(@lt) == 1) {
-                            push @singleoctet, sprintf(q{\\x%02X},         $lt[0]);
-                        }
-                        elsif (scalar(@lt) >= 2) {
-                            push @singleoctet, sprintf(q{\\x%02X-\\x%02X}, $lt[0], $lt[-1]);
-                        }
-
-                        push @singleoctet, sprintf(q{\\x%02X-\\x%02X},     $begin, $end);
-
-                        my @gt = grep {$_ > $end  } sort {$a <=> $b} keys %range;
-                        if (scalar(@gt) == 1) {
-                            push @singleoctet, sprintf(q{\\x%02X},         $gt[0]);
-                        }
-                        elsif (scalar(@gt) >= 2) {
-                            push @singleoctet, sprintf(q{\\x%02X-\\x%02X}, $gt[0], $gt[-1]);
-                        }
-                    }
-                    else {
-                        push @singleoctet, sprintf(q{\\x%02X-\\x%02X},     $begin, $end);
-                    }
-                }
-            }
-
-            # range of double octet code
-            elsif (
-                ($char[$i-1] =~ m/\A [\x81-\xFE][\x00-\xFF] \z/oxms) and
-                ($char[$i+1] =~ m/\A [\x81-\xFE][\x00-\xFF] \z/oxms)
-            ) {
-                my($begin1,$begin2) = unpack 'CC', $char[$i-1];
-                my($end1,  $end2)   = unpack 'CC', $char[$i+1];
-                my $begin = $begin1 * 0x100 + $begin2;
-                my $end   = $end1   * 0x100 + $end2;
-                if ($begin > $end) {
-                    croak "$__FILE__: invalid [] range \"\\x" . unpack('H*',$char[$i-1]) . '-\\x' . unpack('H*',$char[$i+1]) . '" in regexp';
-                }
-                elsif ($begin1 == $end1) {
-                    push @charlist, sprintf(q{\\x%02X[\\x%02X-\\x%02X]}, $begin1, $begin2, $end2);
-                }
-                elsif (($begin1 + 1) == $end1) {
-                    push @charlist, sprintf(q{\\x%02X[\\x%02X-\\xFF]},   $begin1, $begin2);
-                    push @charlist, sprintf(q{\\x%02X[\\x00-\\x%02X]},   $end1,   $end2);
-                }
-                else {
-                    my @middle = ();
-                    for my $c ($begin1+1 .. $end1-1) {
-                        my $char = chr($c);
-                        if ($char =~ /\A [\x81-\xFE] \z/oxms) {
-                            push @middle, $c;
-                        }
-                    }
-                    if (scalar(@middle) == 0) {
-                        push @charlist, sprintf(q{\\x%02X[\\x%02X-\\xFF]},         $begin1,    $begin2);
-                        push @charlist, sprintf(q{\\x%02X[\\x00-\\x%02X]},         $end1,      $end2);
-                    }
-                    elsif (scalar(@middle) == 1) {
-                        push @charlist, sprintf(q{\\x%02X[\\x%02X-\\xFF]},         $begin1,    $begin2);
-                        push @charlist, sprintf(q{\\x%02X[\\x00-\\xFF]},           $middle[0]);
-                        push @charlist, sprintf(q{\\x%02X[\\x00-\\x%02X]},         $end1,      $end2);
-                    }
-                    else {
-                        push @charlist, sprintf(q{\\x%02X[\\x%02X-\\xFF]},         $begin1,    $begin2);
-                        push @charlist, sprintf(q{[\\x%02X-\\x%02X][\\x00-\\xFF]}, $middle[0], $middle[-1]);
-                        push @charlist, sprintf(q{\\x%02X[\\x00-\\x%02X]},         $end1,      $end2);
-                    }
-                }
-            }
-
-            # range error
-            else {
-                croak "$__FILE__: invalid [] range \"\\x" . unpack('H*',$char[$i-1]) . '-\\x' . unpack('H*',$char[$i+1]) . '" in regexp';
-            }
-
-            $i += 2;
-        }
-
-        # /i modifier
-        elsif (($char[$i] =~ m/\A ([A-Za-z]) \z/oxms) and (($i+1 > $#char) or ($char[$i+1] ne '...'))) {
-            my $c = $1;
-            if ($modifier =~ m/i/oxms) {
-                push @singleoctet, CORE::uc $c, CORE::lc $c;
-            }
-            else {
-                push @singleoctet, $c;
-            }
-            $i += 1;
-        }
-
-        # single character
-        elsif ($char[$i] =~ m/\A (?: [\x00-\xFF] | \\d | \\h | \\s | \\v | \\w )  \z/oxms) {
-            push @singleoctet, $char[$i];
-            $i += 1;
-        }
-        else {
-            push @charlist, $char[$i];
-            $i += 1;
-        }
-    }
-    if ((scalar(@char) >= 2) and ($char[-2] ne '...')) {
-        if ($char[-1] =~ m/\A [\x00-\xFF] \z/oxms) {
-            push @singleoctet, $char[-1];
-        }
-        else {
-            push @charlist, $char[-1];
-        }
-    }
-
-    # quote metachar
-    for (@singleoctet) {
-        if (m/\A \n \z/oxms) {
-            $_ = '\n';
-        }
-        elsif (m/\A \r \z/oxms) {
-            $_ = '\r';
-        }
-        elsif (m/\A ([\x00-\x1F\x7F-\xFF]) \z/oxms) {
-            $_ = sprintf(q{\\x%02X}, ord $1);
-        }
-        elsif (m/\A [\x00-\xFF] \z/oxms) {
-            $_ = quotemeta $_;
-        }
-    }
-    for (@charlist) {
-        if (m/\A ([\x81-\xFE]) ([\x00-\xFF]) \z/oxms) {
-            $_ = $1 . quotemeta $2;
-        }
-    }
-
-    # return character list
-    if (scalar(@charlist) >= 1) {
-        if (scalar(@singleoctet) >= 1) {
-
-            # any character other than double octet and single octet character class
-            return '(?!' . join('|', @charlist) . ')(?:[\x81-\xFE][\x00-\xFF]|[^'. join('', @singleoctet) . '])';
-        }
-        else {
-
-            # any character other than double octet character class
-            return '(?!' . join('|', @charlist) . ')(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])';
-        }
+    if ($^O eq 'MacOS') {
+        $expr =~ s#::#:#g;
     }
     else {
-        if (scalar(@singleoctet) >= 1) {
-
-            # any character other than single octet character class
-            return                                 '(?:[\x81-\xFE][\x00-\xFF]|[^'. join('', @singleoctet) . '])';
-        }
-        else {
-
-            # any character
-            return                                 '(?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF])';
-        }
+        $expr =~ s#::#/#g;
     }
+    $expr .= '.pm' if $expr !~ m/ \.pm \z/oxmsi;
+
+    return $expr;
 }
 
 #
-# GBK chr(0x5C) ended path on MSWin32
+# real file name of module
 #
-sub MSWin32_5Cended_path {
+sub _realfilename {
+    my($expr) = @_;
 
-    if ((@_ >= 1) and ($_[0] ne '')) {
-        if ($^O =~ /\A (?: MSWin32 | NetWare | symbian | dos ) \z/oxms) {
-            my @char = $_[0] =~ /\G ([\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) /oxmsg;
-            if ($char[-1] =~ m/\A [\x81-\xFE][\x5C] \z/oxms) {
-                return 1;
-            }
-        }
+    if ($^O eq 'MacOS') {
+        return map {"$_$expr"} @INC;
     }
-    return;
+    else {
+        return map {"$_/$expr"} @INC;
+    }
 }
 
 1;
@@ -4565,7 +4727,7 @@ __END__
 
 =head1 NAME
 
-GBK - "Yet Another JPerl" Source code filter to escape GBK
+GBK - Source code filter to escape GBK
 
 =head1 SYNOPSIS
 
@@ -4583,23 +4745,54 @@ GBK - "Yet Another JPerl" Source code filter to escape GBK
   GBK_script.pl  --- script written in GBK
   Escaped_script.pl.e --- escaped script
 
+  functions:
+    GBK::ord(...);
+    GBK::reverse(...);
+    GBK::length(...);
+    GBK::substr(...);
+    GBK::index(...);
+    GBK::rindex(...);
+
+  emulate Perl5.6 on perl5.005
+    binmode(...);
+    open(...);
+
+  dummy functions:
+    utf8::upgrade(...);
+    utf8::downgrade(...);
+    utf8::encode(...);
+    utf8::decode(...);
+    utf8::is_utf8(...);
+    utf8::valid(...);
+    bytes::chr(...);
+    bytes::index(...);
+    bytes::length(...);
+    bytes::ord(...);
+    bytes::rindex(...);
+    bytes::substr(...);
+
 =head1 ABSTRACT
 
 Let's start with a bit of history: jperl 4.019+1.3 introduced GBK support.
-You could apply chop() and regexps even to complex CJK characters -- so long as
-the script was written in GBK.
+You could apply chop() and regexps even to complex CJK characters.
 
-Since Perl5.8, Encode module is supported for multilingual processing, and it is
-said that jperl became unnecessary. But is it really so?
+JPerl in CPAN Perl Ports (Binary Distributions)
 
-The UTF-8 is still rare on the Microsoft Windows -- most popular operating systems
-we're loving, so many users hope to write scripts in GBK encodings; without
-giving up a whole new feature of Perl5.8, Perl5.10.
+http://www.cpan.org/ports/index.html#jperl
 
-The GBK was developed in order to maintain backward compatibility. Generally,
-the operating systems and the programming language succeed to a past standard and
-are made. To maintain backward compatibility is an effective solution still now.
+said,
 
+  As of Perl 5.8.0 it is suggested that instead of JPerl (which is
+  based on a quite old release of Perl) you should just use Perl 5.8.0,
+  since it can do all that JPerl did, and more.
+
+But is it really so?
+
+In this country, GBK is widely used on mainframe I/O, the personal computer,
+and the cellular phone. This software treats GBK directly. Therefor there is
+not UTF8 flag.
+
+A difficult solution makes the problem more difficult.
 Shall we escape from the encode problem?
 
 =head1 Yet Another Future Of
@@ -4610,12 +4803,14 @@ better, fitter GBK.
 
 Now, the last version of JPerl is 5.005_04 and is not maintained now.
 
-Japanization modifier Hirofumi Watanabe said,
+Japanization modifier WATANABE Hirofumi said,
 
-  "Because Watanabe am tired I give over maintaing JPerl."
+  "Because WATANABE am tired I give over maintaing JPerl."
 
-at Slide #15: "The future of JPerl"
-of L<ftp://ftp.oreilly.co.jp/pcjp98/watanabe/jperlconf.ppt>
+at Slide #15: "The future of JPerl" of
+
+L<ftp://ftp.oreilly.co.jp/pcjp98/watanabe/jperlconf.ppt>
+
 in The Perl Confernce Japan 1998.
 
 When I heard it, I thought that someone excluding me would maintain JPerl.
@@ -4633,134 +4828,622 @@ What's this software good for ...
 
 =item * Possible to handle raw GBK values
 
-=item * Possible to re-use past data, past code and how to
+=item * Backward compatibility of data, script and how to
 
-=item * No UTF8 flag
+=item * Only GBK.pm and Egbk.pm, other modules are unnecessary
 
-=item * But Perl5 compatible
+=item * No UTF8 flag, perlunitut and perluniadvice
 
 =item * No C programming (for maintain JPerl)
 
-=item * But JPerl compatible
+=item * Independent from binary file (CPU, OS, perl version, 32bit/64bit)
 
 =back
 
 Let's make yet another future by JPerl's future.
 
+=head1 BASIC IDEA
+
+I discovered this mail again recently.
+
+[Tokyo.pm] jus Benkyoukai
+
+http://mail.pm.org/pipermail/tokyo-pm/1999-September/001854.html
+
+save as: SJIS.pm
+
+  package SJIS;
+  use Filter::Util::Call;
+  sub multibyte_filter {
+      my $status;
+      if (($status = filter_read()) > 0 ) {
+          s/([\x81-\x9f\xe0-\xef])([\x40-\x7e\x80-\xfc])/
+              sprintf("\\x%02x\\x%02x",ord($1),ord($2))
+          /eg;
+      }
+      $status;
+  }
+  sub import {
+      filter_add(\&multibyte_filter);
+  }
+  1;
+
+I am glad that I could confirm my idea is not so wrong.
+
 =head1 SOFTWARE COMPOSITION
 
-   GBK.pm          --- source code filter to escape GBK
-   Egbk.pm         --- run-time routines for GBK.pm
-   perl58.bat       --- find and run perl5.8  without %PATH% settings
-   perl510.bat      --- find and run perl5.10 without %PATH% settings
+   GBK.pm               --- source code filter to escape GBK
+   Egbk.pm              --- run-time routines for GBK.pm
+   perl55.bat            --- find and run perl5.5  without %PATH% settings
+   perl56.bat            --- find and run perl5.6  without %PATH% settings
+   perl58.bat            --- find and run perl5.8  without %PATH% settings
+   perl510.bat           --- find and run perl5.10 without %PATH% settings
+   perl512.bat           --- find and run perl5.12 without %PATH% settings
+   perl64.bat            --- find and run perl64   without %PATH% settings
+   strict.pm_            --- dummy strict.pm
+   warnings.pm_          --- poor warnings.pm
+   warnings/register.pm_ --- poor warnings/register.pm
 
-=head1 JPerl COMPATIBLE FUNCTIONS
+   Rename and install strict.pm_ of this distribution to strict.pm if your system
+   doesn't have strict.pm.
 
-The following functions function as much as JPerl.
-A part of function in the script is written and changes by this software.
+=head1 Upper Compatibility By Escaping
 
-=over 2
+This software adds the function by 'Escaping' it always, and nothing of the
+past is broken. Therefore, 'Possible job' never becomes 'Impossible job'.
+This approach is effective in the field where the retreat is never permitted.
+Modern Perl/perl can not always solve the problem.
 
-=item * handle double octet string in single quote
+=head1 Escaping Your Script (You do)
 
-=item * handle double octet string in double quote
+You need write 'use GBK;' in your script.
 
-=item * handle double octet regexp in single quote
+  ---------------------------------
+  Before      After
+  ---------------------------------
+  (nothing)   use GBK;
+  ---------------------------------
 
-=item * handle double octet regexp in double quote
+=head1 Escaping Multiple Octet Code (GBK.pm provides)
 
-=item * chop --> Egbk::chop
-
-=item * split --> Egbk::split
-
-=item * length
-
-=item * substr
-
-=item * index --> Egbk::index
-
-=item * rindex --> Egbk::rindex
-
-=item * pos
-
-=item * lc --> Egbk::lc or Egbk::lc_
-
-=item * uc --> Egbk::uc or Egbk::uc_
-
-=item * ord (when no import)
-
-=item * reverse (when no import)
-
-=item * tr/// or y/// --> Egbk::tr
-
-/b and /B modifier can also be used.
-
-=item * chdir --> Egbk::chdir
-
-support chr(0x5C) ended path on only perl5.005 if MSWin32.
-
-=item * do --> Egbk::do
-
-=item * require --> Egbk::require
-
-=item * use Perl::Module @list; --> BEGIN { Egbk::require 'Perl/Module.pm'; Perl::Module->import(@list); }
-
-=item * use Perl::Module (); --> BEGIN { Egbk::require 'Perl/Module.pm'; }
-
-=back
-
-=head1 JPerl UPPER COMPATIBLE FUNCTIONS
-
-The following functions are enhanced more than JPerl.
+Insert chr(0x5c) before  @  [  \  ]  ^  `  {  |  and  }  in multiple octet of
 
 =over 2
 
-=item * chr --> Egbk::chr or Egbk::chr_
+=item * string in single quote ('', q{}, <<'END' and qw{})
 
-double octet code can also be handled.
+=item * string in double quote ("", qq{}, <<END, <<"END", ``, qx{} and <<`END`)
 
-=item * ord --> Egbk::ord or Egbk::ord_
+=item * regexp in single quote (m'', s''', split(''), split(m'') and qr'')
 
-double octet code can also be handled when "use GBK qw(ord);".
-It means not compatible with JPerl.
+=item * regexp in double quote (//, m//, ??, s///, split(//), split(m//) and qr//)
 
-=item * reverse --> Egbk::reverse
-
-double octet code can also be handled in scalar context when "use GBK qw(reverse);".
-It means not compatible with JPerl.
-
-=item * -X --> Egbk::X or Egbk::X_
-
-support chr(0x5C) ended path on MSWin32.
-
-=item * glob --> Egbk::glob or Egbk::glob_
-
-  @glob = Egbk::glob($string);
-  @glob = Egbk::glob_;
-
-performs filename expansion (DOS-like globbing) on $string.
-a tilde ("~") expands to the current user's home directory.
-support chr(0x5C) ended path on MSWin32.
-
-=item * lstat --> Egbk::lstat or Egbk::lstat_
-
-support chr(0x5C) ended path on MSWin32.
-
-=item * opendir --> Egbk::opendir
-
-support chr(0x5C) ended path on MSWin32.
-
-=item * stat --> Egbk::stat or Egbk::stat_
-
-support chr(0x5C) ended path on MSWin32.
-
-=item * unlink --> Egbk::unlink
-
-support chr(0x5C) ended path on MSWin32.
+=item * character in tr/// (tr/// and y///)
 
 =back
 
-=head1 BUGS AND LIMITATIONS OR JPerl NOT COMPATIBLE FUNCTIONS
+  ex. Japanese Katakana "SO" like [ `/ ] code is "\x83\x5C" in SJIS
+ 
+                  see     hex dump
+  -----------------------------------------
+  source script   "`/"    [83 5c]
+  -----------------------------------------
+ 
+  Here, use SJIS;
+                          hex dump
+  -----------------------------------------
+  escaped script  "`\/"   [83 [5c] 5c]
+  -----------------------------------------
+                    ^--- escape by SJIS software
+ 
+  by the by       see     hex dump
+  -----------------------------------------
+  your eye's      "`/\"   [83 5c] [5c]
+  -----------------------------------------
+  perl eye's      "`\/"   [83] \[5c]
+  -----------------------------------------
+ 
+                          hex dump
+  -----------------------------------------
+  in the perl     "`/"    [83] [5c]
+  -----------------------------------------
+
+=head1 Escaping Character Classes (Egbk.pm provides)
+
+The character classes are redefined as follows to backward compatibility.
+
+  ---------------------------------------------------------------------------
+  Before      After
+  ---------------------------------------------------------------------------
+   .          (?:[\x81-\xFE][\x00-\xFF]|[^\x0A])
+              (?:[\x81-\xFE][\x00-\xFF]|[\x00-\xFF]) (/s modifier)
+  \d          [0-9]
+  \s          [\x09\x0A\x0C\x0D\x20]
+  \w          [0-9A-Z_a-z]
+  \D          (?:[\x81-\xFE][\x00-\xFF]|[^0-9])
+  \S          (?:[\x81-\xFE][\x00-\xFF]|[^\x09\x0A\x0C\x0D\x20])
+  \W          (?:[\x81-\xFE][\x00-\xFF]|[^0-9A-Z_a-z])
+  \h          [\x09\x20]
+  \v          [\x0C\x0A\x0D]
+  \H          (?:[\x81-\xFE][\x00-\xFF]|[^\x09\x20])
+  \V          (?:[\x81-\xFE][\x00-\xFF]|[^\x0C\x0A\x0D])
+  ---------------------------------------------------------------------------
+
+Also \b and \B are redefined as follows to backward compatibility.
+
+  ---------------------------------------------------------------------------
+  Before      After
+  ---------------------------------------------------------------------------
+  \b          (?:\A(?=[0-9A-Z_a-z])|(?<=[\x00-\x2F\x40\x5B-\x5E\x60\x7B-\xFF])(?=[0-9A-Z_a-z])|(?<=[0-9A-Z_a-z])(?=[\x00-\x2F\x40\x5B-\x5E\x60\x7B-\xFF]|\z))
+  \B          (?:(?<=[0-9A-Z_a-z])(?=[0-9A-Z_a-z])|(?<=[\x00-\x2F\x40\x5B-\x5E\x60\x7B-\xFF])(?=[\x00-\x2F\x40\x5B-\x5E\x60\x7B-\xFF]))
+  ---------------------------------------------------------------------------
+
+=head1 Escaping Built-in Functions (GBK.pm and Egbk.pm provide)
+
+Insert 'Egbk::' at head of function name. Egbk.pm provides your script Egbk::*
+functions.
+
+  ---------------------------------
+  Before      After
+  ---------------------------------
+  length      length
+  substr      substr
+  pos         pos
+  split       Egbk::split
+  tr///       Egbk::tr
+  tr///b      tr///
+  tr///B      tr///
+  y///        Egbk::tr
+  y///b       tr///
+  y///B       tr///
+  chop        Egbk::chop
+  index       Egbk::index
+  rindex      Egbk::rindex
+  lc          Egbk::lc
+  lcfirst     Egbk::lcfirst
+  uc          Egbk::uc
+  ucfirst     Egbk::ucfirst
+  chr         Egbk::chr
+  glob        Egbk::glob
+  lstat       Egbk::lstat
+  opendir     Egbk::opendir
+  stat        Egbk::stat
+  unlink      Egbk::unlink
+  chdir       Egbk::chdir
+  do          Egbk::do
+  require     Egbk::require
+  ---------------------------------
+
+  ------------------------------------------------------------------------------------------------------------------------
+  Before                   After
+  ------------------------------------------------------------------------------------------------------------------------
+  use Perl::Module;        BEGIN { Egbk::require 'Perl/Module.pm'; Perl::Module->import() if Perl::Module->can('import'); }
+  use Perl::Module @list;  BEGIN { Egbk::require 'Perl/Module.pm'; Perl::Module->import(@list) if Perl::Module->can('import'); }
+  use Perl::Module ();     BEGIN { Egbk::require 'Perl/Module.pm'; }
+  no Perl::Module;         BEGIN { Egbk::require 'Perl/Module.pm'; Perl::Module->unimport() if Perl::Module->can('unimport'); }
+  no Perl::Module @list;   BEGIN { Egbk::require 'Perl/Module.pm'; Perl::Module->unimport(@list) if Perl::Module->can('unimport'); }
+  no Perl::Module ();      BEGIN { Egbk::require 'Perl/Module.pm'; }
+  ------------------------------------------------------------------------------------------------------------------------
+
+=head1 Un-Escaping bytes::* Functions (GBK.pm provides)
+
+GBK.pm remove 'bytes::' at head of function name.
+
+  ------------------------------------
+  Before           After
+  ------------------------------------
+  bytes::chr       chr
+  bytes::index     index
+  bytes::length    length
+  bytes::ord       ord
+  bytes::rindex    rindex
+  bytes::substr    substr
+  ------------------------------------
+
+=head1 Escaping File Test Operators (GBK.pm and Egbk.pm provide)
+
+Insert 'Egbk::' instead of '-' of operator.
+
+  ---------------------------------
+  Before      After
+  ---------------------------------
+  -r          Egbk::r
+  -w          Egbk::w
+  -x          Egbk::x
+  -o          Egbk::o
+  -R          Egbk::R
+  -W          Egbk::W
+  -X          Egbk::X
+  -O          Egbk::O
+  -e          Egbk::e
+  -z          Egbk::z
+  -f          Egbk::f
+  -d          Egbk::d
+  -l          Egbk::l
+  -p          Egbk::p
+  -S          Egbk::S
+  -b          Egbk::b
+  -c          Egbk::c
+  -t          -t
+  -u          Egbk::u
+  -g          Egbk::g
+  -k          Egbk::k
+  -T          Egbk::T
+  -B          Egbk::B
+  -s          Egbk::s
+  -M          Egbk::M
+  -A          Egbk::A
+  -C          Egbk::C
+  ---------------------------------
+
+=head1 Escaping Function Name (You do)
+
+You need write 'GBK::' at head of function name when you want character
+oriented function. See 'CHARACTER ORIENTED FUNCTIONS'.
+
+  ---------------------------------
+  Before      After
+  ---------------------------------
+  ord         GBK::ord
+  reverse     GBK::reverse
+  length      GBK::length
+  substr      GBK::substr
+  index       GBK::index
+  rindex      GBK::rindex
+  ---------------------------------
+
+=head1 Escaping Built-in Standard Module (Egbk.pm provides)
+
+Egbk.pm does "BEGIN { unshift @INC, '/Perl/site/lib/GBK' }" at head.
+Store the standard module modified for GBK software in this directory to
+override built-in standard modules.
+
+=head1 Escaping Standard Module Content (You do)
+
+You need copy built-in standard module to /Perl/site/lib/GBK and change
+'use utf8;' to 'use GBK;' in its. You need help yourself for now.
+
+Back to and see 'Escaping Your Script'. Enjoy hacking!!
+
+=head1 CHARACTER ORIENTED FUNCTIONS
+
+=over 2
+
+=item Order of Character
+
+  $ord = GBK::ord($string);
+
+  This function returns the numeric value (ASCII or GBK) of the first character
+  of $string. The return value is always unsigned.
+
+=item Reverse list or string
+
+  @reverse = GBK::reverse(@list);
+  $reverse = GBK::reverse(@list);
+
+  In list context, this function returns a list value consisting of the elements of
+  @list in the opposite order. The function can be used to create descending
+  sequences:
+
+  for (GBK::reverse(1 .. 10)) { ... }
+
+  Because of the way hashes flatten into lists when passed as a @list, reverse can
+  also be used to invert a hash, presuming the values are unique:
+
+  %barfoo = GBK::reverse(%foobar);
+
+  In scalar context, the function concatenates all the elements of LIST and then
+  returns the reverse of that resulting string, character by character.
+
+=item length by GBK character
+
+  $length = GBK::length($string);
+  $length = GBK::length();
+
+  This function returns the length in characters of the scalar value $string. If
+  $string is omitted, it returns the GBK::length of $_.
+
+  Do not try to use length to find the size of an array or hash. Use scalar @array
+  for the size of an array, and scalar keys %hash for the number of key/value pairs
+  in a hash. (The scalar is typically omitted when redundant.)
+
+  To find the length of a string in bytes rather than characters, say:
+
+  $blen = length($string);
+  $blen = CORE::length($string);
+  $blen = bytes::length($string);
+
+=item substr by GBK character
+
+  $substr = GBK::substr($string,$offset,$length,$replacement);
+  $substr = GBK::substr($string,$offset,$length);
+  $substr = GBK::substr($string,$offset);
+
+  This function extracts a substring out of the string given by $string and returns
+  it. The substring is extracted starting at $offset characters from the front of
+  the string.
+  If $offset is negative, the substring starts that far from the end of the string
+  instead. If $length is omitted, everything to the end of the string is returned.
+  If $length is negative, the length is calculated to leave that many characters off
+  the end of the string. Otherwise, $length indicates the length of the substring to
+  extract, which is sort of what you'd expect.
+
+  An alternative to using GBK::substr as an lvalue is to specify the $replacement
+  string as the fourth argument. This allows you to replace parts of the $string and
+  return what was there before in one operation, just as you can with splice. The next
+  example also replaces the last character of $var with "Curly" and puts that replaced
+  character into $oldstr: 
+
+  $oldstr = GBK::substr($var, -1, 1, "Curly");
+
+  If you assign something shorter than the length of your substring, the string will
+  shrink, and if you assign something longer than the length, the string will grow to
+  accommodate it. To keep the string the same length, you may need to pad or chop your
+  value using sprintf or the x operator. If you attempt to assign to an unallocated
+  area past the end of the string, GBK::substr raises an exception.
+
+  To prepend the string "Larry" to the current value of $_, use:
+
+  GBK::substr($var, 0, 0, "Larry");
+
+  To instead replace the first character of $_ with "Moe", use:
+
+  GBK::substr($var, 0, 1, "Moe");
+
+  And finally, to replace the last character of $var with "Curly", use:
+
+  GBK::substr($var, -1, 1, "Curly");
+
+=item index by GBK character
+
+  $index = GBK::index($string,$substring,$offset);
+  $index = GBK::index($string,$substring);
+
+  This function searches for one string within another. It returns the position of
+  the first occurrence of $substring in $string. The $offset, if specified, says how
+  many characters from the start to skip before beginning to look. Positions are
+  based at 0. If the substring is not found, the function returns one less than the
+  base, ordinarily -1. To work your way through a string, you might say:
+
+  $pos = -1;
+  while (($pos = GBK::index($string, $lookfor, $pos)) > -1) {
+      print "Found at $pos\n";
+      $pos++;
+  }
+
+=item rindex by GBK character
+
+  $rindex = GBK::rindex($string,$substring,$position);
+  $rindex = GBK::rindex($string,$substring);
+
+  This function works just like GBK::index except that it returns the position of
+  the last occurrence of $substring in $string (a reverse index). The function
+  returns -1 if not $substring is found. $position, if specified, is the rightmost
+  position that may be returned. To work your way through a string backward, say:
+
+  $pos = GBK::length($string);
+  while (($pos = GBK::rindex($string, $lookfor, $pos)) >= 0) {
+      print "Found at $pos\n";
+      $pos--;
+  }
+
+=back
+
+=head1 Perl5.6 Emulation on perl5.005
+
+  To be compatible with Perl5.6 on perl5.005, script is converted as follows.
+
+  --------------------------------------------------------------------
+  Before          After                  in BEGIN { } of Egbk.pm
+  --------------------------------------------------------------------
+  binmode(...);   Egbk::binmode(...);   *CORE::GLOBAL::binmode = ...
+  open(...);      Egbk::open(...);      *CORE::GLOBAL::open    = ...
+  --------------------------------------------------------------------
+
+=head1 Ignore utf8 pragma
+
+  Comment out pragma to ignore utf8 environment, and Egbk.pm provides these
+  functions.
+
+  ---------------------------------------------------------------------
+  Before          After                  Explanation
+  ---------------------------------------------------------------------
+  use utf8;       # use utf8;            Egbk.pm provides utf8::*
+  no utf8;        # no utf8;             functions even if 'no utf8;'
+  use bytes;      # use bytes;           Egbk.pm provides bytes::*
+  no bytes;       # no bytes;            functions even if 'no bytes;'
+  ---------------------------------------------------------------------
+
+=over 2
+
+=item binmode (Perl5.6 emulation on perl5.005)
+
+  binmode(FILEHANDLE, $disciplines);
+  binmode(FILEHANDLE);
+  binmode($filehandle, $disciplines);
+  binmode($filehandle);
+
+  * two arguments
+
+  If you are using perl5.005, GBK software emulate perl5.6's binmode function.
+  Only the point is here. See also perlfunc/binmode for details.
+
+  This function arranges for the FILEHANDLE to have the semantics specified by the
+  $disciplines argument. If $disciplines is omitted, ':raw' semantics are applied
+  to the filehandle. If FILEHANDLE is an expression, the value is taken as the
+  name of the filehandle or a reference to a filehandle, as appropriate.
+  The binmode function should be called after the open but before any I/O is done
+  on the filehandle. The only way to reset the mode on a filehandle is to reopen
+  the file, since the various disciplines may have treasured up various bits and
+  pieces of data in various buffers.
+
+  The ":raw" discipline tells Perl to keep its cotton-pickin' hands off the data.
+  For more on how disciplines work, see the open function.
+
+=item open (Perl5.6 emulation on perl5.005)
+
+  open(FILEHANDLE, $mode, $expr);
+  open(FILEHANDLE, $expr);
+  open(FILEHANDLE);
+  open(my $filehandle, $mode, $expr);
+  open(my $filehandle, $expr);
+  open(my $filehandle);
+
+  * autovivification filehandle
+  * three arguments
+
+  If you are using perl5.005, GBK software emulate perl5.6's open function.
+  Only the point is here. See also perlfunc/open for details.
+
+  As that example shows, the FILEHANDLE argument is often just a simple identifier
+  (normally uppercase), but it may also be an expression whose value provides a
+  reference to the actual filehandle. (The reference may be either a symbolic
+  reference to the filehandle name or a hard reference to any object that can be
+  interpreted as a filehandle.) This is called an indirect filehandle, and any
+  function that takes a FILEHANDLE as its first argument can handle indirect
+  filehandles as well as direct ones. But open is special in that if you supply
+  it with an undefined variable for the indirect filehandle, Perl will automatically
+  define that variable for you, that is, autovivifying it to contain a proper
+  filehandle reference.
+
+  {
+      my $fh;                   # (uninitialized)
+      open($fh, ">logfile")     # $fh is autovivified
+          or die "Can't create logfile: $!";
+          ...                   # do stuff with $fh
+  }                             # $fh closed here
+
+  The my $fh declaration can be readably incorporated into the open:
+
+  open my $fh, ">logfile" or die ...
+
+  The > symbol you've been seeing in front of the filename is an example of a mode.
+  Historically, the two-argument form of open came first. The recent addition of
+  the three-argument form lets you separate the mode from the filename, which has
+  the advantage of avoiding any possible confusion between the two. In the following
+  example, we know that the user is not trying to open a filename that happens to
+  start with ">". We can be sure that they're specifying a $mode of ">", which opens
+  the file named in $expr for writing, creating the file if it doesn't exist and
+  truncating the file down to nothing if it already exists:
+
+  open(LOG, ">", "logfile")  or die "Can't create logfile: $!";
+
+  With the one- or two-argument form of open, you have to be careful when you use
+  a string variable as a filename, since the variable may contain arbitrarily
+  weird characters (particularly when the filename has been supplied by arbitrarily
+  weird characters on the Internet). If you're not careful, parts of the filename
+  might get interpreted as a $mode string, ignorable whitespace, a dup specification,
+  or a minus.
+  Here's one historically interesting way to insulate yourself:
+
+  $path =~ s#^([ ])#./$1#;
+  open (FH, "< $path\0") or die "can't open $path: $!";
+
+  But that's still broken in several ways. Instead, just use the three-argument
+  form of open to open any arbitrary filename cleanly and without any (extra)
+  security risks:
+
+  open(FH, "<", $path) or die "can't open $path: $!";
+
+  As of the 5.6 release of Perl, you can specify binary mode in the open function
+  without a separate call to binmode. As part of the $mode
+  argument (but only in the three-argument form), you may specify various input
+  and output disciplines.
+  To do the equivalent of a binmode, use the three argument form of open and stuff
+  a discipline of :raw in after the other $mode characters:
+
+  open(FH, "<:raw", $path) or die "can't open $path: $!";
+
+  Table 1. I/O Disciplines
+  -------------------------------------------------
+  Discipline      Meaning
+  -------------------------------------------------
+  :raw            Binary mode; do no processing
+  :crlf           Text mode; Intuit newlines
+  :encoding(...)  Legacy encoding
+  -------------------------------------------------
+
+  You'll be able to stack disciplines that make sense to stack, so, for instance,
+  you could say:
+
+  open(FH, "<:crlf:encoding(GBK)", $path) or die "can't open $path: $!";
+
+=item dummy utf8::upgrade
+
+  $num_octets = utf8::upgrade($string);
+
+  Returns the number of octets necessary to represent the string.
+
+=item dummy utf8::downgrade
+
+  $success = utf8::downgrade($string[, FAIL_OK]);
+
+  Returns true always.
+
+=item dummy utf8::encode
+
+  utf8::encode($string);
+
+  Returns nothing.
+
+=item dummy utf8::decode
+
+  $success = utf8::decode($string);
+
+  Returns true always.
+
+=item dummy utf8::is_utf8
+
+  $flag = utf8::is_utf8(STRING);
+
+  Returns false always.
+
+=item dummy utf8::valid
+
+  $flag = utf8::valid(STRING);
+
+  Returns true always.
+
+=item dummy bytes::chr
+
+  This function is same as chr.
+
+=item dummy bytes::index
+
+  This function is same as index.
+
+=item dummy bytes::length
+
+  This function is same as length.
+
+=item dummy bytes::ord
+
+  This function is same as ord.
+
+=item dummy bytes::rindex
+
+  This function is same as rindex.
+
+=item dummy bytes::substr
+
+  This function is same as substr.
+
+=back
+
+=head1 ENVIRONMENT VARIABLE
+
+ This software uses the flock function for exclusive control. The execution of the
+ program is blocked until it becomes possible to read or write the file.
+ You can have it not block in the flock function by defining environment variable
+ SJIS_NONBLOCK.
+ 
+ Example:
+ 
+   SET SJIS_NONBLOCK=1
+ 
+ (The value '1' doesn't have the meaning)
+
+=head1 BUGS AND LIMITATIONS
 
 Please patches and report problems to author are welcome.
 
@@ -4768,115 +5451,70 @@ Please patches and report problems to author are welcome.
 
 =item * format
 
-Function "format" can't handle double octet code same as original Perl.
+Function "format" can't handle multiple octet code same as original Perl.
 
 =item * chdir
 
-Function "chdir" can't change directory chr(0x5C) ended path on perl5.006, perl5.008
-and perl5.010 if MSWin32.
+Function chdir() can always be executed with perl5.005.
+
+On perl5.006 or perl5.00800, if path is ended by chr(0x5C), it needs jacode.pl
+library.
+
+On perl5.008001 or later, perl5.010 or perl5.012, if path is ended by chr(0x5C),
+it needs Win32 module. Chdir succeeds when a short path name can be acquired
+according to Win32::GetShortPathName(). However, the current directory is a
+short path name.
 
 see also,
 Bug #81839
 chdir does not work with chr(0x5C) at end of path
 http://bugs.activestate.com/show_bug.cgi?id=81839
 
-=item * here document
+=item * Look-behind Assertion
 
-When two or more delimiters of here documents are in one line, if any one is
-a double quote type(<<"END", <<END or <<`END`), then all here documents will
-escape for double quote type.
+The look-behind assertion like (?<=[A-Z]) is not prevented from matching trail
+octet of the previous multiple octet code.
 
-    ex.1
-        print <<'END';
-        ============================================================
-        Escaped for SINGLE quote document.   --- OK
-        ============================================================
-        END
+=item * GBK::substr as lvalue
 
-    ex.2
-        print <<\END;
-        ============================================================
-        Escaped for SINGLE quote document.   --- OK
-        ============================================================
-        END
+GBK::substr differs from CORE::substr, and cannot be used as a lvalue.
+To change part of a string, you can use the optional fourth argument which is the
+replacement string.
 
-    ex.3
-        print <<"END";
-        ============================================================
-        Escaped for DOUBLE quote document.   --- OK
-        ============================================================
-        END
+GBK::substr($string, 13, 4, "JPerl");
 
-    ex.4
-        print <<END;
-        ============================================================
-        Escaped for DOUBLE quote document.   --- OK
-        ============================================================
-        END
+=item * Special variables $` and $& doesn't function
 
-    ex.5
-        print <<`END`;
-        ============================================================
-        Escaped for DOUBLE quote command.   --- OK
-        ============================================================
-        END
+  Because ...
 
-    ex.6
-        print <<'END1', <<'END2';
-        ============================================================
-        Escaped for SINGLE quote document.   --- OK
-        ============================================================
-        END1
-        ============================================================
-        Escaped for SINGLE quote document.   --- OK
-        ============================================================
-        END2
+  Script
+    'AAABBBCCC' =~ /BBB/;
 
-    ex.7
-        print <<"END1", <<"END2";
-        ============================================================
-        Escaped for DOUBLE quote document.   --- OK
-        ============================================================
-        END1
-        ============================================================
-        Escaped for DOUBLE quote document.   --- OK
-        ============================================================
-        END2
+  is escaped to
+    'AAABBBCCC' =~ /\G(?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])*?(?:BBB)@Egbk::m_matched/;
 
-    ex.8
-        print <<'END1', <<"END2", <<'END3';
-        ============================================================
-        Escaped for DOUBLE quote document 'END1', "END2", 'END3'.
-        'END1' and 'END3' see string rewritten for "END2".
-        ============================================================
-        END1
-        ============================================================
-        Escaped for DOUBLE quote document "END2", 'END3'.
-        'END3' see string rewritten for "END2".
-        ============================================================
-        END2
-        ============================================================
-        Escaped for DOUBLE quote document "END3".
-        'END3' see string rewritten for "END2".
-        ============================================================
-        END3
+  For multibyte anchoring,
+    <\G(?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])*?> is added.
 
-    ex.9
-        print <<"END1", <<'END2', <<"END3";
-        ============================================================
-        Escaped for DOUBLE quote document "END1", 'END2', "END3".
-        'END2' see string rewritten for "END1" and "END3".
-        ============================================================
-        END1
-        ============================================================
-        Escaped for DOUBLE quote document 'END2', "END3".
-        'END2' see string rewritten for "END3".
-        ============================================================
-        END2
-        ============================================================
-        Escaped for DOUBLE quote document.   --- OK
-        ============================================================
-        END3
+  Result
+    $' = ''       (expect 'AAA')
+    $& = 'AAABBB' (expect 'BBB')
+    $` = 'CCC'
+
+  Solution ...
+
+  Script
+    'AAABBBCCC' =~ /(BBB)/;
+
+  Enclose the entire regular expression with ( ... ) for capturing.
+
+  is escaped to
+    'AAABBBCCC' =~ /\G(?:[\x81-\xFE][\x00-\xFF]|[^\x81-\xFE])*?(?:(BBB))@Egbk::m_matched/;
+
+  Result
+    $1 = 'BBB'
+
+  $1 does function instead of $&.
 
 =back
 
@@ -4885,8 +5523,6 @@ escape for double quote type.
 INABA Hitoshi E<lt>ina@cpan.orgE<gt>
 
 This project was originated by INABA Hitoshi.
-For any questions, use E<lt>ina@cpan.orgE<gt> so we can share
-this file.
 
 =head1 LICENSE AND COPYRIGHT
 
@@ -4897,372 +5533,34 @@ This software is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
-=head1 GBK Encoding
-
-GBK encoding is the most common encoding method used on Japanese
-computers, developed by Microsoft Corporation.
-
-GBK is sometimes referred to as MS Kanji (Microsoft Kanji) or SJIS
-(an abbreviation for GBK).
-
-Historically, GBK was so named because of the way the code positions
-for two-octet characters shifted around the code positions for half-width
-katakana -- Japanese computer users originally used only half-width katakana,
-so GBK was developed in order to maintain backword compatibility.
-
-A two-octet-per-character mode in GBK is initiated with a octet having
-a hexadecimal value ranging between 0x81-0x9F or 0xE0-0xEF. This octet is
-subsequently treated as the first octet of an expected two-octet sequence.
-The following (second) octet must have a hexadecimal value ranging between
-0x40-0x7E or 0x80-0xFC. Note that the first octet's range falls entirely in
-the extended ASCII character set -- in the eight-bit character set with the
-high-order bit on. Note that GBK also encodes half-width katakana and
-ASCII/JIS-Roman.
-
-Some definitions (in particular, corporate definitions) of GBK also
-contain encoding blocks for user-defined characters or even an encoded position
-for a half-width katakana space character. Such encoding blocks and encoded
-positions are not useful if true information interchange is desired, because
-they are encoded in such a way that they do not convert to encoded positions
-in other Japanese encoding methods (that is, JIS and EUC).
-
-=head1 GBK IN WIKIPEDIA
-
-Shift JIS (2008.02.15 15:02:00 JST). In Wikipedia: The Free Encyclopedia.
-Retrieved from
-L<http://en.wikipedia.org/wiki/Shift_JIS>
-
-Shift JIS (also SJIS, MIME name Shift_JIS) is a character encoding
-for the Japanese language originally developed by a Japanese company
-called ASCII Corporation in conjunction with Microsoft and standardized
-as JIS X 0208 Appendix 1. It is based on character sets defined within
-JIS standards JIS X 0201:1997 (for the single-byte characters) and
-JIS X 0208:1997 (for the double byte characters). The lead bytes for
-the double byte characters are "shifted" around the 64 halfwidth katakana
-characters in the single-byte range 0xA1 to 0xDF. The single-byte
-characters 0x00 to 0x7F match the ASCII encoding, except for a yen sign
-at 0x5C and an overline at 0x7E in place of the ASCII character set's
-backslash and tilde respectively. On the web, 0x5C is still used as the
-Perl Script escape character. The single-byte characters from 0xA1 to 0xDF
-map to the half-width katakana characters found in JIS X 0201. 
-
-Shift JIS requires an 8-bit medium for transmission. It is fully backwards
-compatible with the legacy JIS X 0201 single-byte encoding, meaning it
-supports half-width katakana and that any valid JIS X 0201 string is also
-a valid Shift JIS string. However Shift JIS only guarantees that the first
-byte will be in the upper ASCII range; the value of the second byte can be
-either high or low. This makes reliable Shift JIS detection difficult.
-On the other hand, the competing 8-bit format EUC-JP, which does not
-support single-byte halfwidth katakana, allows for a much cleaner and
-direct conversion to and from JIS X 0208 codepoints, as all upper-ASCII
-bytes are part of a double-byte character and all lower-ASCII bytes are
-part of a single-byte character.
-
-Many different versions of Shift JIS exist. There are two areas for
-expansion: Firstly, JIS X 0208 does not fill the whole 94x94 space encoded
-for it in Shift JIS, therefore there is room for more characters here ?
-these are really extensions to JIS X 0208 rather than to Shift JIS itself.
-The most popular extension here is to the Windows-31J (otherwise known as
-Code page 932) encoding popularized by Microsoft, although Microsoft
-itself does not recognize the Windows-31J name and instead calls that
-variation "shift_jis". Secondly, Shift JIS has more encoding space than is
-needed for JIS X 0201 and JIS X 0208, and this space can and is used for
-yet more characters. The space with lead bytes 0xF5 to 0xF9 is used by
-Japanese mobile phone operators for pictographs for use in E-mail, for
-example (KDDI goes further and defines hundreds more in the space with
-lead bytes 0xF3 and 0xF4).
-
-Beyond even this there have been numerous minor variations made on Shift
-JIS, with individual characters here and there altered. Most of these
-extensions and variants have no IANA registration, so there is much scope
-for confusion if the extensions are used. Microsoft Code Page 932 is
-registered separately from Shift JIS.
-IBM CCSID 943 has the same extensions as Code Page 932.
-As with most code pages and encodings it is recommended that Unicode be
-used instead.
-
-=head1 "GBK" IN THIS SOFTWARE
-
- The "GBK" in this software means widely codeset than general
-GBK. This software use two algorithms to handle GBK.
-
-=over 2
-
-=item * ALGORITHM #1
-
- When the character is taken out of the octet string, it is necessary to
-distinguish a single octet character and the double octet character.
-The distinction is done only by first octet.
-
-    Single octet code is:
-      0x00-0x80, 0xA0-0xDF and 0xFD-0xFF
-
-    Double octet code is:
-      First octet   0x81-0x9F, 0xE0-0xEF and 0xF0-0xFC
-      Second octet  0x00-0xFF (All octet)
-
-    MALFORMED single octet code is:
-      0x81-0x9F and 0xE0-0xFC
-      * Final octet of string like first octet of double octet code
-
- So this "GBK" can handle any code of GBK based code without
-Hewlett-Packard HP-15 and Informix Ascii 'INFORMIX V6 ALS' is triple octet
-code. (I'm sorry, these users.)
-
-See also code table:
-
-         Single octet code
-
-   0 1 2 3 4 5 6 7 8 9 A B C D E F 
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 0|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0x00-0x80
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 1|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 2|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 3|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 4|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 5|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 6|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 7|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8|*| | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 9| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- A|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0xA0-0xDF
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- B|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- C|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- D|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- E| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- F| | | | | | | | | | | | | |*|*|*| 0xFD-0xFF
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-
-                                 Double octet code
-            First octet                                     Second octet
-
-   0 1 2 3 4 5 6 7 8 9 A B C D E F                 0 1 2 3 4 5 6 7 8 9 A B C D E F 
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 0| | | | | | | | | | | | | | | | |              0|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0x00-0xFF
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 1| | | | | | | | | | | | | | | | |              1|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 2| | | | | | | | | | | | | | | | |              2|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 3| | | | | | | | | | | | | | | | |              3|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 4| | | | | | | | | | | | | | | | |              4|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 5| | | | | | | | | | | | | | | | |              5|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 6| | | | | | | | | | | | | | | | |              6|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 7| | | | | | | | | | | | | | | | |              7|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8| |*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0x81-0x9F    8|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 9|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|              9|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- A| | | | | | | | | | | | | | | | |              A|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- B| | | | | | | | | | | | | | | | |              B|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- C| | | | | | | | | | | | | | | | |              C|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- D| | | | | | | | | | | | | | | | |              D|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- E|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0xE0-0xFC    E|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- F|*|*|*|*|*|*|*|*|*|*|*|*|*| | | |              F|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-
-    *MALFORMED* Single octet code
-
-Final octet of string like first octet of double octet code
-
-Even if malformed, it is not ignored and not deleted automatically.
-For example, Egbk::chop function returns this octet.
-
-   0 1 2 3 4 5 6 7 8 9 A B C D E F 
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 0| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 1| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 2| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 3| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 4| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 5| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 6| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 7| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8| |M|M|M|M|M|M|M|M|M|M|M|M|M|M|M| 0x81-0x9F
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 9|M|M|M|M|M|M|M|M|M|M|M|M|M|M|M|M|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- A| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- B| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- C| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- D| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- E|M|M|M|M|M|M|M|M|M|M|M|M|M|M|M|M|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- F|M|M|M|M|M|M|M|M|M|M|M|M|M| | | |  0xE0-0xFC
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-
-The GBK list via vendors:
-L<http://home.m05.itscom.net/numa/cde/sjis-euc/sjis.html>
-
- DEC PC                         0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- DEC WS                         0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- Fujitsu TrueType font (PC)     0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- Fujitsu FontCity font (PC)     0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- Hitachi PC                     0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- Hitachi WS                     0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- IBM                            0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- NEC Windows (PC)               0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- NEC DOS (PC)                   0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- SONY NEWS-OS                   0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- Sun Wabi                       0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- Unisys PC                      0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- HP Japan Japanese HP-15        0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- AT&T Japan                     0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- Mitsubishi Electric FONTRUNNER 0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- Concurrent Japan               0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
- Informix ASCII INFORMIX V6 ALS 0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC), (0xFD)(0xA1-0xFE)(0xA1-0xFE)
- Oracle Oracle7 (Release 7.1.3) 0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x00-0xFF)
- Sybase SQL Server, Open Server 0x00-0x7F, 0xA1-0xDF, (0x81-0x9F, 0xE0-0xFC)(0x40-0x7E, 0x80-0xFC)
-
-Understanding Japanese Information Processing(ISBN 10: 1-56592-043-0 | ISBN 13: 9781565920439)
-
- Hewlett-Packard HP-15          0x00-0x7F, 0xA1-0xDF, (0x80-0xA0, 0xE0-0xFE)(0x21-0x7E, 0x80-0xFF)
-
-=item * ALGORITHM #2
-
-Against algorithm.1, when the range of the character by tr/// is specified, only the
-following character codes are effective.
-
-    Single octet code is:
-      0x00-0x80, 0xA0-0xDF and 0xFD-0xFF
-
-    Double octet code is:
-      First octet   0x81-0x9F, 0xE0-0xEF and 0xF0-0xFC
-      Second octet  0x40-0x7E and 0x80-0xFC
-
-For instance, [\x81\x00-\x82\xFF] in script means [\x81\x82][\x40-\x7E\x80-\xFE].
-
-See also code table:
-
-         Single octet code
-
-   0 1 2 3 4 5 6 7 8 9 A B C D E F 
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 0|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0x00-0x80
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 1|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 2|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 3|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 4|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 5|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 6|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 7|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8|*| | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 9| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- A|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0xA0-0xDF
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- B|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- C|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- D|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- E| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- F| | | | | | | | | | | | | |*|*|*| 0xFD-0xFF
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-
-                                 Double octet code
-            First octet                                     Second octet
-
-   0 1 2 3 4 5 6 7 8 9 A B C D E F                 0 1 2 3 4 5 6 7 8 9 A B C D E F 
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 0| | | | | | | | | | | | | | | | |              0| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 1| | | | | | | | | | | | | | | | |              1| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 2| | | | | | | | | | | | | | | | |              2| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 3| | | | | | | | | | | | | | | | |              3| | | | | | | | | | | | | | | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 4| | | | | | | | | | | | | | | | |              4|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0x40-0x7E
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 5| | | | | | | | | | | | | | | | |              5|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 6| | | | | | | | | | | | | | | | |              6|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 7| | | | | | | | | | | | | | | | |              7|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8| |*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0x81-0x9F    8|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0x80-0xFC
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 9|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|              9|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- A| | | | | | | | | | | | | | | | |              A|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- B| | | | | | | | | | | | | | | | |              B|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- C| | | | | | | | | | | | | | | | |              C|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- D| | | | | | | | | | | | | | | | |              D|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- E|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*| 0xE0-0xFC    E|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|*|
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- F|*|*|*|*|*|*|*|*|*|*|*|*|*| | | |              F|*|*|*|*|*|*|*|*|*|*|*|*|*| | | |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-
 =head1 MY GOAL
 
-See chapter 15: Unicode
+P.401 See chapter 15: Unicode
 of ISBN 0-596-00027-8 Programming Perl Third Edition.
 
 Before the introduction of Unicode support in perl, The eq operator
-just compared the strings represented by two scalars. Beginning
-with perl 5.8, eq compares two strings with simultaneous consideration
-of the UTF8 flag.
+just compared the byte-strings represented by two scalars. Beginning
+with perl 5.8, eq compares two byte-strings with simultaneous
+consideration of the UTF8 flag.
+
+  Information processing model beginning with perl 5.8
+ 
+    +----------------------+---------------------+
+    |     Text strings     |                     |
+    +----------+-----------|    Binary strings   |
+    |   UTF8   |  Latin-1  |                     |
+    +----------+-----------+---------------------+
+    | UTF8     |            Not UTF8             |
+    | Flagged  |            Flagged              |
+    +--------------------------------------------+
+    http://perl-users.jp/articles/advent-calendar/2010/casual/4
+ 
+    You should memorize this figure.
+ 
+    (Why is only Latin-1 special?)
 
 This change consequentially made a big gap between a past script and
-present script. Both scripts cannot re-use the code mutually any longer.
+new script. Both scripts cannot re-use the code mutually any longer.
 Because a new method puts a strain in the programmer, it will still take
 time to replace all the in existence scripts.
 
@@ -5270,6 +5568,19 @@ The biggest problem of new method is that the UTF8 flag can't synchronize
 to real encode of string. Thus you must debug about UTF8 flag, before
 your script. How to solve it by returning to a past method, I will quote
 page 402 of Programming Perl, 3rd ed. again.
+
+  Information processing model beginning with this software
+ 
+    +-----------------------------------+
+    |           Octet Strings           | aka Binary strings
+    +-----------------------------------+
+    |         Character Strings         | aka Text strings
+    +-----------------------------------+
+    |      ASCII Compatible Encoding    | ex. GBK
+    +-----------------------------------+
+                (No UTF8 Flag)
+ 
+    You need not memorize this figure.
 
 Ideally, I'd like to achieve these five Goals:
 
@@ -5294,8 +5605,7 @@ In this part, there is no change. The length of 1 character of 2 octet
 code is 2.
 
 On the other hand, the regular expression in the script is added the
-multibyte anchoring processing with this software. This software does
-the rewriting instead of you.
+multibyte anchoring processing with this software, instead of you.
 
 figure of Goal #1 and Goal #2.
 
@@ -5329,7 +5639,7 @@ exist at time of be written this document and JPerl did exist.
 
 The reason why JPerl is very excellent is that it is at the position of
 (c). That is, it is not necessary to do a special description to the
-script to process Japanese.
+script to process new character-oriented string.
 
 Contrasting is Encode module and describing "use GBK;" on this software,
 in this case, a new description is necessary.
@@ -5351,16 +5661,25 @@ It is impossible. Because the following time is necessary.
 Perl should remain one language, rather than forking into a
 byte-oriented Perl and a character-oriented Perl.
 
-A character-oriented Perl is not necessary to make it specially,
-because a byte-oriented Perl can already treat the binary data.
+JPerl forked the perl interpreter so as not to fork the Perl language.
+But the Perl core team might not hope for the perl interpreter's fork.
+As a result, the Perl language forked, and the community was reduced
+through necessity.
+
+A character-oriented perl is not necessary to make it specially,
+because a byte-oriented perl can already treat the binary data.
 This software is only an application program of Perl, a filter program.
 If perl can be executed, this software will be able to be executed.
+
+And you will get support from the Perl community, when you solve the
+problem by the Perl script.
 
 =item Goal #5:
 
 JPerl users will be able to maintain JPerl by Perl.
+Or MacJPerl users will be able to maintain MacJPerl by MacPerl.
 
---- maybe.
+May the JPerl be with you, always.
 
 =back
 
@@ -5370,100 +5689,136 @@ programming environment like at that time.
 
 =head1 SEE ALSO
 
- C<Programming Perl, Second Edition>
+ Programming Perl, Second Edition
  By Larry Wall, Tom Christiansen, Randal L. Schwartz
  January 1900 (really so?)
  Pages: 670
  ISBN 10: 1-56592-149-6 | ISBN 13: 9781565921498
- L<http://oreilly.com/catalog/9781565921498/>
+ http://oreilly.com/catalog/9781565921498/
 
- C<Programming Perl, Third Edition>
+ Programming Perl, Third Edition
  By Larry Wall, Tom Christiansen, Jon Orwant
  Third Edition  July 2000
  Pages: 1104
  ISBN 10: 0-596-00027-8 | ISBN 13:9780596000271
- L<http://www.oreilly.com/catalog/pperl3/index.html>
+ http://www.oreilly.com/catalog/pperl3/index.html
 
- C<Perl Cookbook, Second Edition>
+ Perl Cookbook, Second Edition
  By Tom Christiansen, Nathan Torkington
  Second Edition  August 2003
  Pages: 964
  ISBN 10: 0-596-00313-7 | ISBN 13: 9780596003135
- L<http://oreilly.com/catalog/9780596003135/index.html>
+ http://oreilly.com/catalog/9780596003135/index.html
 
- C<Perl in a Nutshell, Second Edition>
+ Perl in a Nutshell, Second Edition
  By Stephen Spainhour, Ellen Siever, Nathan Patwardhan
  Second Edition  June 2002
  Pages: 760
  Series: In a Nutshell
  ISBN 10: 0-596-00241-6 | ISBN 13: 9780596002411
- L<http://oreilly.com/catalog/9780596002411/index.html>
+ http://oreilly.com/catalog/9780596002411/index.html
 
- C<Learning Perl on Win32 Systems>
+ Learning Perl on Win32 Systems
  By Randal L. Schwartz, Erik Olson, Tom Christiansen
  August 1997
  Pages: 306
  ISBN 10: 1-56592-324-3 | ISBN 13: 9781565923249
- L<http://oreilly.com/catalog/9781565923249/>
+ http://oreilly.com/catalog/9781565923249/
 
- C<Understanding Japanese Information Processing>
+ Learning Perl, Fifth Edition
+ By Randal L. Schwartz, Tom Phoenix, brian d foy
+ June 2008
+ Pages: 352
+ Print ISBN:978-0-596-52010-6 | ISBN 10: 0-596-52010-7
+ Ebook ISBN:978-0-596-10316-3 | ISBN 10: 0-596-10316-6
+ http://oreilly.com/catalog/9780596520113/
+
+ Perl RESOURCE KIT UNIX EDITION
+ Futato, Irving, Jepson, Patwardhan, Siever
+ ISBN 10: 1-56592-370-7
+
+ Understanding Japanese Information Processing
  By Ken Lunde
  January 1900
  Pages: 470
  ISBN 10: 1-56592-043-0 | ISBN 13: 9781565920439
- L<http://oreilly.com/catalog/9781565920439/>
+ http://oreilly.com/catalog/9781565920439/
 
- C<CJKV Information Processing>
+ CJKV Information Processing
  Chinese, Japanese, Korean & Vietnamese Computing
  By Ken Lunde
  First Edition  January 1999
  Pages: 1128
  ISBN 10: 1-56592-224-7 | ISBN 13:9781565922242
- L<http://www.oreilly.com/catalog/cjkvinfo/index.html>
+ http://www.oreilly.com/catalog/cjkvinfo/index.html
  ISBN 4-87311-108-0
- L<http://www.oreilly.co.jp/books/4873111080/>
+ http://www.oreilly.co.jp/books/4873111080/
 
- C<Mastering Regular Expressions, Second Edition>
+ Mastering Regular Expressions, Second Edition
  By Jeffrey E. F. Friedl
  Second Edition  July 2002
  Pages: 484
  ISBN 10: 0-596-00289-0 | ISBN 13: 9780596002893
- L<http://oreilly.com/catalog/9780596002893/index.html>
+ http://oreilly.com/catalog/9780596002893/index.html
 
- C<Mastering Regular Expressions, Third Edition>
+ Mastering Regular Expressions, Third Edition
  By Jeffrey E. F. Friedl
  Third Edition  August 2006
  Pages: 542
  ISBN 10: 0-596-52812-4 | ISBN 13:9780596528126
- L<http://www.oreilly.com/catalog/regex3/index.html>
+ http://www.oreilly.com/catalog/regex3/index.html
  ISBN 978-4-87311-359-3
- L<http://www.oreilly.co.jp/books/9784873113593/>
+ http://www.oreilly.co.jp/books/9784873113593/
 
- C<PERL PUROGURAMINGU>
+ Regular Expressions Cookbook
+ By Jan Goyvaerts, Steven Levithan
+ May 2009
+ Pages: 512
+ ISBN 10:0-596-52068-9 | ISBN 13: 978-0-596-52068-7
+ http://oreilly.com/catalog/9780596520694/
+
+ PERL PUROGURAMINGU
  Larry Wall, Randal L.Schwartz, Yoshiyuki Kondo
  December 1997
  ISBN 4-89052-384-7
- L<http://www.context.co.jp/~cond/books/old-books.html>
+ http://www.context.co.jp/~cond/books/old-books.html
 
- C<JIS KANJI JITEN>
+ JIS KANJI JITEN
  Kouji Shibano
  Pages: 1456
  ISBN 4-542-20129-5
- L<http://www.webstore.jsa.or.jp/lib/lib.asp?fn=/manual/mnl01_12.htm>
+ http://www.webstore.jsa.or.jp/lib/lib.asp?fn=/manual/mnl01_12.htm
 
- C<UNIX MAGAZINE>
+ UNIX MAGAZINE
  1993 Aug
  Pages: 172
  T1008901080816 ZASSHI 08901-8
- L<http://ascii.asciimw.jp/books/magazines/unix.shtml>
+ http://ascii.asciimw.jp/books/magazines/unix.shtml
 
- C<Debugging Perl>
- Troubleshooting for Programmers
- Martin C. Brown
- 1st edition October 2, 2000
- Pages: 425
- ISBN-10: 0072126760 | ISBN-13: 978-0072126761
- L<http://www.amazon.com/Debugging-Perl-Troubleshooting-Martin-Brown/dp/0072126760>
+ MacPerl Power and Ease
+ By Vicki Brown, Chris Nandor
+ April 1998
+ Pages: 350
+ ISBN 10: 1881957322 | ISBN 13: 978-1881957324
+ http://www.amazon.com/Macperl-Power-Ease-Vicki-Brown/dp/1881957322
+
+ GBK software family
+ http://search.cpan.org/dist/Big5HKSCS/
+ http://search.cpan.org/dist/Big5Plus/
+ http://search.cpan.org/dist/EUCJP/
+ http://search.cpan.org/dist/GB18030/
+ http://search.cpan.org/dist/GBK/
+ http://search.cpan.org/dist/HP15/
+ http://search.cpan.org/dist/INFORMIXV6ALS/
+ http://search.cpan.org/dist/Latin1/
+ http://search.cpan.org/dist/OldUTF8/
+ http://search.cpan.org/dist/GBK/
+ http://search.cpan.org/dist/UHC/
+ http://search.cpan.org/dist/UTF2/
+
+ Other Tools
+ http://search.cpan.org/dist/jacode/
+ http://search.cpan.org/dist/Char/
 
 =head1 ACKNOWLEDGEMENTS
 
@@ -5471,45 +5826,89 @@ This software was made referring to software and the document that the
 following hackers or persons had made. 
 I am thankful to all persons.
 
- Rick Yamashita, GBK
- L<ttp://furukawablog.spaces.live.com/Blog/cns!1pmWgsL289nm7Shn7cS0jHzA!2225.entry>
+ Rick Yamashita, Shift_JIS
+ ttp://furukawablog.spaces.live.com/Blog/cns!1pmWgsL289nm7Shn7cS0jHzA!2225.entry
  (add 'h' at head)
 
  Larry Wall, Perl
- L<http://www.perl.org/>
+ http://www.perl.org/
 
  Kazumasa Utashiro, jcode.pl
- L<http://www.srekcah.org/jcode/>
+ ftp://ftp.iij.ad.jp/pub/IIJ/dist/utashiro/perl/
 
  Jeffrey E. F. Friedl, Mastering Regular Expressions
- L<http://www.oreilly.com/catalog/regex/index.html>
+ http://www.oreilly.com/catalog/regex/index.html
 
- SADAHIRO Tomoyuki, The right way of using GBK
- L<http://homepage1.nifty.com/nomenclator/perl/shiftjis.htm>
+ SADAHIRO Tomoyuki, The right way of using Shift_JIS
+ http://homepage1.nifty.com/nomenclator/perl/shiftjis.htm
+ http://search.cpan.org/dist/GBK-Regexp/
 
- Yukihiro "Matz" Matsumoto
- L<http://www.rubyist.net/~matz/slides/yapc2006/>
+ Yukihiro "Matz" Matsumoto, YAPC::Asia2006 Ruby on Perl(s)
+ http://www.rubyist.net/~matz/slides/yapc2006/
 
  jscripter, For jperl users
- L<http://homepage1.nifty.com/kazuf/jperl.html>
+ http://homepage1.nifty.com/kazuf/jperl.html
+
+ Bruce., Unicode in Perl
+ http://www.rakunet.org/TSNET/TSabc/18/546.html
 
  Hiroaki Izumi, Perl5.8/Perl5.10 is not useful on the Windows.
- L<http://www.aritia.org/hizumi/perl/perlwin.html>
+ http://www.aritia.jp/hizumi/oldtext/perlwin.html
 
  TSUKAMOTO Makio, Perl memo/file path of Windows
- L<http://digit.que.ne.jp/work/wiki.cgi?Perl%E3%83%A1%E3%83%A2%2FWindows%E3%81%A7%E3%81%AE%E3%83%95%E3%82%A1%E3%82%A4%E3%83%AB%E3%83%91%E3%82%B9>
+ http://digit.que.ne.jp/work/wiki.cgi?Perl%E3%83%A1%E3%83%A2%2FWindows%E3%81%A7%E3%81%AE%E3%83%95%E3%82%A1%E3%82%A4%E3%83%AB%E3%83%91%E3%82%B9
 
- chaichanPaPa, Matching GBK file name
- L<http://d.hatena.ne.jp/chaichanPaPa/20080802/1217660826>
+ chaichanPaPa, Matching Shift_JIS file name
+ http://d.hatena.ne.jp/chaichanPaPa/20080802/1217660826
 
  SUZUKI Norio, Jperl
- L<http://homepage2.nifty.com/kipp/perl/jperl/>
+ http://homepage2.nifty.com/kipp/perl/jperl/
 
- Hirofumi Watanabe, Jperl
- L<http://search.cpan.org/~watanabe/>
+ WATANABE Hirofumi, Jperl
+ http://search.cpan.org/~watanabe/
+ ftp://ftp.oreilly.co.jp/pcjp98/watanabe/jperlconf.ppt
+
+ Chuck Houpt, Michiko Nozu, MacJPerl
+ http://habilis.net/macjperl/index.j.html
+
+ Kenichi Ishigaki, Pod-PerldocJp, Welcome to modern Perl world
+ http://search.cpan.org/dist/Pod-PerldocJp/
+ http://gihyo.jp/dev/serial/01/modern-perl/0031
+ http://gihyo.jp/dev/serial/01/modern-perl/0032
+ http://gihyo.jp/dev/serial/01/modern-perl/0033
 
  Dan Kogai, Encode module
- L<http://search.cpan.org/dist/Encode/>
+ http://search.cpan.org/dist/Encode/
+ http://www.dan.co.jp/~dankogai/yapcasia2006/slide.html
+
+ Juerd, Perl Unicode Advice
+ http://juerd.nl/site.plp/perluniadvice
+
+ daily dayflower, 2008-06-25 perluniadvice
+ http://d.hatena.ne.jp/dayflower/20080625/1214374293
+
+ Jesse Vincent, Compatibility is a virtue
+ http://www.nntp.perl.org/group/perl.perl5.porters/2010/05/msg159825.html
+
+ Tokyo-pm archive
+ http://mail.pm.org/pipermail/tokyo-pm/
+ http://mail.pm.org/pipermail/tokyo-pm/1999-September/001844.html
+ http://mail.pm.org/pipermail/tokyo-pm/1999-September/001854.html
+
+ ruby-list
+ http://blade.nagaokaut.ac.jp/ruby/ruby-list/index.shtml
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/2440
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/2446
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/2569
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/9427
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/9431
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/10500
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/10501
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/10502
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/12385
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/12392
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/12393
+ http://blade.nagaokaut.ac.jp/cgi-bin/scat.rb/ruby/ruby-list/19156
 
 =cut
 
